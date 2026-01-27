@@ -1,0 +1,49 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Android
+android/.gradle/
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/captures/
+android/local.properties
+android/.idea/
+android/*.iml
+android/app/*.iml
+android/gradle/
+android/gradlew
+android/gradlew.bat
+
+# Assets - QEMU binaries and VM images are too large for git
+android/app/src/main/assets/qemu/
+android/app/src/main/assets/vm/
+*.qcow2
+*.qcow2.gz
+
+# Misc
+*.log
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Python (for guest scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
