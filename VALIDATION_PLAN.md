@@ -100,8 +100,18 @@ flowchart TD
 
 Status Snapshot Relative to TODO
 - Completed: Scope definition and initial sources (Docker rootless, QEMU docs, QEMU license, Podman).
-- In progress: Android kernel CONFIG_USER_NS citation, explicit QEMU slirp limitations, licensing compliance checklist, networking constraints text.
-- Pending: Play policy citations, storage quotas references, SAF export guidance, performance expectations wording, final patch application.
+- Completed: Android kernel CONFIG_USER_NS citation (gki_defconfig + non_debuggable.config + VTS enforcement).
+- Completed: QEMU slirp limitations (performance overhead, ICMP disabled, guest isolation) with authoritative quotes.
+- Completed: Licensing compliance checklist (GPLv2, TCG BSD, third-party notices) in both ARCHITECTURE.md §10.1 and ARCHITECTURE2.md §14.1.
+- Completed: Play Store policy note (ForegroundService type, background limits, disclosures) in both files.
+- Completed: SELinux/App Sandbox note in both security sections.
+- Completed: KVM explicit unavailability note in both performance sections.
+- Completed: References section added to both ARCHITECTURE.md and ARCHITECTURE2.md.
+- Completed: Final patch applied 2026-02-24.
+
+Remaining open items:
+- Storage quotas and SAF export guidance (not yet in scope of arch docs; consider adding to §5.7/§10 when implementing export feature).
+- Alpine package command validation (apk add docker confirmed; API server install steps confirmed for FastAPI/uvicorn on Alpine).
 
 Approval and Next Step
 - Upon approval of this plan, proceed to collect remaining citations, then request a mode switch to code to apply precise edits to [ARCHITECTURE.md](ARCHITECTURE.md:1) and [ARCHITECTURE2.md](ARCHITECTURE2.md:1) with inline references and updated sections.

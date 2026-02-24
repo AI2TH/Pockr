@@ -14,7 +14,9 @@ Primary plan: this single-app VM approach is the default and recommended impleme
   - cgroups v1/v2 configuration suitable for Docker
   - full container namespaces/overlayfs access for user apps
   - privileges/capabilities to run a container daemon
-- Rootless Docker/Podman still depend on kernel features not exposed to regular apps.
+- `CONFIG_USER_NS` (user namespace support) is absent from the Android GKI ARM64 `gki_defconfig` (defaults to `n`) and `# CONFIG_PID_NS is not set` is explicitly present; production `non_debuggable.config` enforces these restrictions as security hardening. These configs are VTS-enforced since Android O. [Source: [android.googlesource.com — gki_defconfig](https://android.googlesource.com/kernel/common/+/refs/heads/android-mainline/arch/arm64/configs/gki_defconfig); [kernel/configs README](https://android.googlesource.com/kernel/configs/+/refs/heads/master/README.md)]
+- Docker rootless mode requires user namespace support (`CONFIG_USER_NS`), `newuidmap`/`newgidmap` tools, and `/etc/subuid` entries with ≥65,536 subordinate UIDs per user — none of which are available on a stock Android kernel. [Source: [docs.docker.com/engine/security/rootless/](https://docs.docker.com/engine/security/rootless/)]
+- Rootless Podman has the same user namespace dependency and cannot bypass this kernel constraint on stock Android.
 - A VM (QEMU user-mode/system emulation) provides a complete Linux environment with its own kernel and userspace, enabling Docker/Podman inside the guest without device root.
 
 Validation reference (community-tested approach):
@@ -124,6 +126,12 @@ Notes:
 - Use -daemonize to background the VM; track PID for lifecycle management.
 - slirp user-mode networking avoids root; hostfwd exposes VM services on localhost.
 
+Slirp user-mode networking constraints (authoritative):
+- **Performance:** "a lot of overhead so the performance is poor" compared to tap/bridge networking. [Source: [wiki.qemu.org/Documentation/Networking](https://wiki.qemu.org/Documentation/Networking)]
+- **ICMP/ping:** "ICMP traffic does not work (so you cannot use ping within a guest)." [Source: [wiki.qemu.org/Documentation/Networking](https://wiki.qemu.org/Documentation/Networking)]
+- **Guest accessibility:** "the guest is not directly accessible from the host or the external network" — only explicitly hostfwd'd ports are reachable inbound. [Source: [wiki.qemu.org/Documentation/Networking](https://wiki.qemu.org/Documentation/Networking)]
+- TCP and UDP port forwarding via hostfwd is fully supported; advanced NAT features available with tap are not.
+
 ### 5.4 Guest Bootstrap (First Boot)
 - A systemd/init script inside the guest performs:
   - Package update (apk update) and install Docker/Podman.
@@ -152,6 +160,12 @@ Notes:
   - Logs for alert patterns (error/exception)
 - Sends actionable notifications (view logs, restart container).
 
+Play Store policy compliance:
+- ForegroundService is required for persistent background work on Android; must display a persistent notification while the VM is running.
+- Declare the appropriate `foregroundServiceType` (e.g., `dataSync` or `specialUse`) in `AndroidManifest.xml`; `specialUse` requires a Play Store declaration explaining the use case.
+- Background execution limits (Android 8.0+) prevent silent background starts; the ForegroundService must be started from a foreground context or via `startForegroundService()`.
+- Disclose battery and network usage in app store listing and in-app settings; include data usage disclosure if the VM pulls container images over the network. [Source: [developer.android.com/develop/background-work/services/fgs](https://developer.android.com/develop/background-work/services/fgs)]
+
 ### 5.7 Storage & Retention (App Settings)
 - Retention policy (default 30 days or 256MB per container).
 - Rotate logs inside VM (logrotate or custom cron).
@@ -165,6 +179,8 @@ Notes:
 - Token-based authentication; input validation to avoid command injection.
 - App-private storage for assets and guest disks; inaccessible to other apps.
 - Optional: encrypt user.qcow2 using LUKS inside VM (passphrase managed by app).
+- **SELinux / App Sandbox constraints:** Android enforces SELinux in enforcing mode; asset extraction must write only to app-private directories (`getFilesDir()`, `getNoBackupFilesDir()`). Executing extracted binaries (QEMU) requires the files to be in an executable-allowed path; use `context.getCodeCacheDir()` or `getFilesDir()` and ensure the partition is not mounted `noexec`. Test on production SELinux policy, not just emulators.
+- **Disable Docker remote TCP:** Do not enable Docker's TCP socket (`-H tcp://0.0.0.0:2375`) inside the VM; rely solely on the internal API server over hostfwd.
 
 ---
 
@@ -174,7 +190,7 @@ Notes:
   - vCPU = 2 by default; user can set 1–4.
   - RAM = 2GB default; allow 512MB–4GB based on device capability.
 - Use backing file layering (base.qcow2 + user.qcow2) for efficient updates.
-- Consider enabling KVM (if device supports and OS permits) for better performance; treat as optional.
+- **KVM:** Hardware-accelerated virtualization via KVM typically requires root or explicit kernel/device support that is not available on stock consumer Android. Treat KVM as unavailable by default; size performance expectations around software TCG emulation. If a device exposes `/dev/kvm` without root (e.g., some developer boards or emulators), provide an opt-in toggle but do not rely on it. [Source: [wiki.qemu.org/License](https://wiki.qemu.org/License) — TCG BSD; KVM requires kernel module access]
 
 ---
 
@@ -247,8 +263,22 @@ flowchart TD
 
 - Battery and resource usage: VM incurs overhead; defaults tuned conservatively.
 - File I/O: VM disk images consume space; configurable size and retention.
-- Hardware acceleration (KVM) may not be available on many devices; performance varies.
+- Hardware acceleration (KVM) may not be available on many devices; performance varies (see Section 6).
 - No direct integration with Android kernel features (by design, for no-root compliance).
+
+### 10.1 Licensing Compliance Checklist
+
+QEMU is released under the GNU General Public License, version 2 (GPLv2). The Tiny Code Generator (TCG) is released under the BSD (Expat) license. Distributing QEMU binaries in an APK requires:
+
+- [ ] Include the full GPLv2 license text in the app (About / Licenses screen or bundled text file).
+- [ ] Include the TCG BSD license text.
+- [ ] Include third-party notices for all QEMU dependencies (e.g., libffi, glib, pixman as applicable).
+- [ ] Make QEMU source (or a written offer) available per GPLv2 §3 if distributing binaries.
+- [ ] Review individual QEMU source file headers; files in `linux-user/` and `bsd-user/` are GPLv2-only (no "or later" option).
+- [ ] Include Alpine Linux and Docker/Podman license notices for guest packages bundled in the base image.
+- [ ] Maintain a third-party-notices screen accessible from app Settings.
+
+[Source: [wiki.qemu.org/License](https://wiki.qemu.org/License)]
 
 ---
 
@@ -268,4 +298,18 @@ Validated approach:
 - Docker on Android without root requires a VM; this design embeds that VM and automates everything inside one app.
 - Reference (community validation for VM-based Docker): https://github.com/mabdulmoghni/termux-docker-no-root
 
-_Last updated: 2026-01-27_
+---
+
+## 13. References
+
+| Topic | Source |
+|---|---|
+| QEMU hostfwd syntax and slirp networking | https://wiki.qemu.org/Documentation/Networking |
+| QEMU license (GPLv2 + TCG BSD) | https://wiki.qemu.org/License |
+| Docker rootless mode prerequisites | https://docs.docker.com/engine/security/rootless/ |
+| Android GKI ARM64 defconfig (CONFIG_USER_NS absent) | https://android.googlesource.com/kernel/common/+/refs/heads/android-mainline/arch/arm64/configs/gki_defconfig |
+| Android kernel configs README (VTS enforcement) | https://android.googlesource.com/kernel/configs/+/refs/heads/master/README.md |
+| Android ForegroundService (background work) | https://developer.android.com/develop/background-work/services/fgs |
+| Community validation: Docker on Android via VM | https://github.com/mabdulmoghni/termux-docker-no-root |
+
+_Last updated: 2026-02-24_

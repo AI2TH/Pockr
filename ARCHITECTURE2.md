@@ -10,7 +10,9 @@ Deliver one Android app (single APK) that runs Docker/OCI containers on non-root
 
 - Stock Android (non-rooted) typically lacks the kernel features and privileges needed for Docker/Podman:
   - cgroups configuration, namespace access, overlayfs, capabilities for a daemon
-- Rootless modes still depend on kernel features not exposed to regular apps.
+- `CONFIG_USER_NS` is absent from the Android GKI ARM64 `gki_defconfig` (defaults to `n`) and `# CONFIG_PID_NS is not set` is explicitly present; `non_debuggable.config` enforces this for production/user builds as security hardening, VTS-enforced since Android O. [Source: [gki_defconfig](https://android.googlesource.com/kernel/common/+/refs/heads/android-mainline/arch/arm64/configs/gki_defconfig); [kernel/configs README](https://android.googlesource.com/kernel/configs/+/refs/heads/master/README.md)]
+- Docker rootless mode requires `CONFIG_USER_NS`, `newuidmap`/`newgidmap`, and `/etc/subuid` with ≥65,536 subordinate UIDs — unavailable on stock Android kernels. [Source: [docs.docker.com/engine/security/rootless/](https://docs.docker.com/engine/security/rootless/)]
+- Rootless Podman has the same user namespace dependency.
 - VM approach is validated by community implementations using QEMU + Alpine inside Android (e.g., via Termux). We integrate the same concept directly in one APK (no Termux):
   - Reference: https://github.com/mabdulmoghni/termux-docker-no-root (demonstrates Docker in a VM on Android; we embed and automate this inside the app)
 
@@ -61,7 +63,7 @@ Key properties:
 ### 4.2 Embedded Linux VM
 - QEMU user-mode/system emulation (qemu-system-aarch64/x86_64)
 - Base image: Alpine Linux (virt-optimized) QCOW2; minimal footprint
-- Networking: slirp user-mode with host port forward
+- Networking: slirp user-mode with host port forward. Constraints: "a lot of overhead so the performance is poor"; "ICMP traffic does not work"; "guest is not directly accessible from the host or external network" — only hostfwd'd ports are reachable. [Source: [wiki.qemu.org/Documentation/Networking](https://wiki.qemu.org/Documentation/Networking)]
 - Bootstrap: init scripts to install Docker/Podman, start API server
 
 ### 4.3 Guest Services (inside VM)
@@ -128,6 +130,12 @@ qemu-system-x86_64 \
 Notes:
 - slirp (user-mode) networking works without root.
 - Use -daemonize; track PID and manage lifecycle in the app.
+
+Slirp networking constraints (authoritative):
+- **Performance:** "a lot of overhead so the performance is poor" vs. tap/bridge. [Source: [wiki.qemu.org/Documentation/Networking](https://wiki.qemu.org/Documentation/Networking)]
+- **ICMP:** "ICMP traffic does not work (so you cannot use ping within a guest)." [Source: ibid.]
+- **Isolation:** "guest is not directly accessible from the host or the external network" — inbound traffic only via hostfwd. [Source: ibid.]
+- TCP and UDP forwarding via hostfwd is fully supported.
 
 ---
 
@@ -197,7 +205,8 @@ Authentication:
 - Token-based auth and strict input validation
 - App-private storage (sandboxed) for assets and VM files
 - No root; no external apps; single APK controls lifecycle
-- Optionally disable Docker remote TCP (2375) and rely only on internal API
+- Do not enable Docker remote TCP socket (`-H tcp://0.0.0.0:2375`); rely solely on the internal API over hostfwd
+- **SELinux / App Sandbox:** Android enforces SELinux in enforcing mode. Extract assets only to app-private directories (`getFilesDir()`, `getNoBackupFilesDir()`). Ensure the target path is not mounted `noexec` before executing QEMU binaries. Test extraction and execution against production SELinux policy, not just emulators.
 
 ---
 
@@ -206,7 +215,7 @@ Authentication:
 - Default vCPU=2, RAM=2GB; user-adjustable per device capability
 - Prefer Alpine Linux virt; minimal services
 - Use backing file layering (base + user) for upgrade-friendly images
-- If device supports virtualization/KVM without root (rare), provide opt-in toggle
+- **KVM:** Hardware acceleration via KVM requires kernel module access (`/dev/kvm`) that is not available on stock consumer Android without root. Size performance expectations around software TCG emulation. If `/dev/kvm` is accessible on a specific device (e.g., developer boards, emulators), provide an opt-in toggle — do not assume availability. [Source: [wiki.qemu.org/License](https://wiki.qemu.org/License) — TCG BSD; KVM requires kernel module]
 
 ---
 
@@ -240,8 +249,28 @@ flowchart TD
 - Battery/CPU usage: VM overhead; provide resource caps and background service controls
 - Disk space: user.qcow2 growth; retention and cleanup tools in Settings
 - Performance variability: hardware-dependent; document minimum device specs and allow user tuning
-- Licensing: include QEMU and dependency licenses in-app; maintain 3rd-party notices
 - Updates: staged Play Store rollout; telemetry (Crashlytics) for stability
+
+### 14.1 Licensing Compliance Checklist
+
+QEMU is GPLv2; TCG is BSD (Expat). Distributing QEMU in an APK requires:
+
+- [ ] Include full GPLv2 license text in the app (About / Licenses screen or bundled file).
+- [ ] Include TCG BSD (Expat) license text.
+- [ ] Include third-party notices for QEMU dependencies (libffi, glib, pixman, etc.).
+- [ ] Make QEMU source (or written offer) available per GPLv2 §3.
+- [ ] Check individual file headers: `linux-user/` and `bsd-user/` are GPLv2-only (no "or later").
+- [ ] Include Alpine Linux and Docker/Podman notices for packages bundled in the base image.
+- [ ] Maintain a third-party-notices screen in Settings.
+
+[Source: [wiki.qemu.org/License](https://wiki.qemu.org/License)]
+
+### 14.2 Play Store Policy Compliance
+
+- ForegroundService must display a persistent notification while the VM is running.
+- Declare appropriate `foregroundServiceType` in `AndroidManifest.xml`; `specialUse` requires a Play Store declaration explaining the use case.
+- Background execution limits (Android 8.0+): start ForegroundService via `startForegroundService()` from a foreground context.
+- Disclose battery and data usage in the Play Store listing and in-app settings. [Source: [developer.android.com/develop/background-work/services/fgs](https://developer.android.com/develop/background-work/services/fgs)]
 
 ---
 
@@ -263,4 +292,18 @@ Validated approach:
 - Docker on Android without root requires a VM; this design embeds that VM and automates everything inside one app.
 - Reference (community validation for VM-based Docker): https://github.com/mabdulmoghni/termux-docker-no-root
 
-_Last updated: 2026-01-27_
+---
+
+## 17. References
+
+| Topic | Source |
+|---|---|
+| QEMU hostfwd syntax and slirp networking | https://wiki.qemu.org/Documentation/Networking |
+| QEMU license (GPLv2 + TCG BSD) | https://wiki.qemu.org/License |
+| Docker rootless mode prerequisites | https://docs.docker.com/engine/security/rootless/ |
+| Android GKI ARM64 defconfig (CONFIG_USER_NS absent) | https://android.googlesource.com/kernel/common/+/refs/heads/android-mainline/arch/arm64/configs/gki_defconfig |
+| Android kernel configs README (VTS enforcement) | https://android.googlesource.com/kernel/configs/+/refs/heads/master/README.md |
+| Android ForegroundService (background work) | https://developer.android.com/develop/background-work/services/fgs |
+| Community validation: Docker on Android via VM | https://github.com/mabdulmoghni/termux-docker-no-root |
+
+_Last updated: 2026-02-24_
