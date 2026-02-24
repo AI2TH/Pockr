@@ -1,96 +1,90 @@
 #!/bin/bash
-# Master script to set up all assets for the Docker VM app
+# Master asset setup script for the Docker VM app.
+# REQUIRES: Docker (all downloads, builds, and tools run inside containers).
+# Nothing is downloaded or executed directly on the host.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "╔════════════════════════════════════════════════════════════╗"
-echo "║  Docker VM App - Asset Setup                               ║"
+echo "║        Docker VM App — Asset Setup                         ║"
+echo "║  All operations run inside Docker containers               ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo ""
 
-# Check for required tools
-echo "Checking for required tools..."
-MISSING_TOOLS=()
-
-if ! command -v wget &> /dev/null && ! command -v curl &> /dev/null; then
-    MISSING_TOOLS+=("wget or curl")
-fi
-
-if ! command -v gzip &> /dev/null; then
-    MISSING_TOOLS+=("gzip")
-fi
-
-if ! command -v file &> /dev/null; then
-    MISSING_TOOLS+=("file")
-fi
-
-if ! command -v shasum &> /dev/null; then
-    MISSING_TOOLS+=("shasum")
-fi
-
-if [ ${#MISSING_TOOLS[@]} -gt 0 ]; then
-    echo "⚠️  Missing required tools: ${MISSING_TOOLS[*]}"
-    echo ""
-    echo "Please install them:"
-    echo "  macOS: brew install wget gzip coreutils"
-    echo "  Ubuntu/Debian: sudo apt-get install wget gzip file coreutils"
+# Docker is the only host dependency
+if ! command -v docker &>/dev/null; then
+    echo "ERROR: Docker is the only required tool and it was not found."
+    echo "       Install Docker Desktop: https://docs.docker.com/get-docker/"
     exit 1
 fi
 
-echo "✓ All basic tools available"
+echo "✓ Docker $(docker --version | cut -d' ' -f3 | tr -d ',')"
 echo ""
 
-# Menu
-echo "Select asset acquisition method:"
+echo "Select what to set up:"
 echo ""
-echo "  1. Quick setup - Copy bootstrap scripts only (no QEMU/Alpine)"
-echo "  2. Download Alpine Linux image (~50MB download)"
-echo "  3. Extract QEMU from Termux (requires device or APK)"
-echo "  4. Full automated setup (Alpine + bootstrap)"
-echo "  5. Generate checksums for existing assets"
-echo "  6. Verify all assets"
+echo "  1. Bootstrap scripts only   — copy guest/ scripts into assets/"
+echo "  2. Alpine Linux image       — download + convert (~50 MB, uses Docker)"
+echo "  3. QEMU binaries            — extract from Termux .deb packages (uses Docker)"
+echo "  4. Build QEMU from source   — cross-compile inside Docker (slow, ~20 min)"
+echo "  5. Full setup               — steps 1 + 2 + 3"
+echo "  6. Generate checksums       — for all existing assets"
+echo "  7. Verify assets            — validate everything before APK build"
+echo "  8. Test API server          — run guest API server tests in Docker"
 echo ""
-read -p "Choose option (1-6): " -n 1 -r
-echo ""
+read -r -p "Choose option (1-8): " REPLY
 echo ""
 
 case $REPLY in
     1)
-        echo "Running: copy_bootstrap.sh"
         bash "${SCRIPT_DIR}/copy_bootstrap.sh"
         ;;
     2)
-        echo "Running: download_alpine.sh"
         bash "${SCRIPT_DIR}/download_alpine.sh"
         ;;
     3)
-        echo "Running: extract_from_termux.sh"
         bash "${SCRIPT_DIR}/extract_from_termux.sh"
         ;;
     4)
-        echo "Running full setup..."
-        bash "${SCRIPT_DIR}/copy_bootstrap.sh"
-        echo ""
-        bash "${SCRIPT_DIR}/download_alpine.sh"
-        echo ""
-        echo "Next: Extract QEMU binaries manually (see ASSET_GUIDE.md)"
-        echo "Then run option 5 to generate checksums."
+        bash "${SCRIPT_DIR}/build_qemu.sh"
         ;;
     5)
-        echo "Running: generate_checksums.sh"
+        echo "--- Step 1/3: Bootstrap scripts ---"
+        bash "${SCRIPT_DIR}/copy_bootstrap.sh"
+        echo ""
+        echo "--- Step 2/3: Alpine Linux image ---"
+        bash "${SCRIPT_DIR}/download_alpine.sh"
+        echo ""
+        echo "--- Step 3/3: QEMU binaries ---"
+        echo "Choose extraction method (Termux .deb or build from source):"
+        echo "  t = extract from Termux .deb packages"
+        echo "  b = build from source (slow)"
+        read -r -p "Choice (t/b): " QEMU_CHOICE
+        if [[ $QEMU_CHOICE == "b" ]]; then
+            bash "${SCRIPT_DIR}/build_qemu.sh"
+        else
+            bash "${SCRIPT_DIR}/extract_from_termux.sh"
+        fi
+        echo ""
+        echo "--- Generating checksums ---"
         bash "${SCRIPT_DIR}/generate_checksums.sh"
         ;;
     6)
-        echo "Verifying assets..."
+        bash "${SCRIPT_DIR}/generate_checksums.sh"
+        ;;
+    7)
         bash "${SCRIPT_DIR}/verify_assets.sh"
         ;;
+    8)
+        bash "${SCRIPT_DIR}/test_api.sh"
+        ;;
     *)
-        echo "Invalid option"
+        echo "Invalid option: $REPLY"
         exit 1
         ;;
 esac
 
 echo ""
-echo "Done!"
+echo "Done."

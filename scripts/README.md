@@ -1,171 +1,127 @@
-# Asset Acquisition Scripts
+# Asset & Build Scripts
 
-Automation scripts for Phase 2 asset acquisition.
+> **Rule: Docker only.** Every download, build, and test runs inside a Docker container.
+> The only tool required on the host is **Docker Desktop**.
 
-## Scripts Overview
+---
 
-### 🎯 setup_assets.sh
-**Master script with interactive menu**
+## Scripts
 
-Run this first. It provides options for:
-1. Copy bootstrap scripts only
-2. Download Alpine Linux
-3. Extract QEMU from Termux
-4. Full automated setup
-5. Generate checksums
-6. Verify all assets
+| Script | What it does | Docker image used |
+|---|---|---|
+| `setup_assets.sh` | Interactive menu — entry point for everything | delegates |
+| `copy_bootstrap.sh` | Copies `guest/` scripts into Android assets | `alpine:3.19` |
+| `download_alpine.sh` | Downloads Alpine ISO, converts to `base.qcow2.gz` | `debian:bookworm-slim` |
+| `extract_from_termux.sh` | Extracts QEMU binaries from Termux `.deb` packages | `debian:bookworm-slim` |
+| `build_qemu.sh` | Cross-compiles QEMU for Android ARM64 from source | `debian:bookworm` |
+| `generate_checksums.sh` | SHA-256 checksums for all assets | `alpine:3.19` |
+| `verify_assets.sh` | Validates all assets before APK build | `debian:bookworm-slim` |
+| `test_api.sh` | Tests the guest API server end-to-end | `docker:dind` + `alpine:3.19` |
+
+---
+
+## Quick start
 
 ```bash
+# Interactive menu — start here
 ./scripts/setup_assets.sh
 ```
 
-### 📥 download_alpine.sh
-**Download and prepare Alpine Linux image**
+Choose **option 5 (Full setup)** which runs:
+1. Copy bootstrap scripts
+2. Download Alpine image (~50 MB)
+3. Get QEMU binaries (Termux `.deb` or build from source)
 
-- Downloads Alpine Linux 3.19.1 aarch64 ISO
-- Converts to QCOW2 format
-- Compresses to base.qcow2.gz
-- Places in assets/vm/
-
-**Requirements:** qemu-img, wget/curl
-
+Then verify:
 ```bash
-./scripts/download_alpine.sh
+./scripts/verify_assets.sh
 ```
 
-### 📱 extract_from_termux.sh
-**Extract QEMU binaries from Termux**
+---
 
-Two modes:
-1. From device via adb
-2. From downloaded .deb packages
+## Individual scripts
 
-**Requirements:** adb (for option 1) or dpkg-deb/ar (for option 2)
-
-```bash
-./scripts/extract_from_termux.sh
-```
-
-### 📋 copy_bootstrap.sh
-**Copy bootstrap scripts to assets**
-
-Copies guest scripts to Android assets:
-- api_server.py
-- init_bootstrap.sh
-- requirements.txt
-
+### `copy_bootstrap.sh`
 ```bash
 ./scripts/copy_bootstrap.sh
 ```
+Copies `guest/api_server.py`, `init_bootstrap.sh`, `requirements.txt` into
+`android/app/src/main/assets/bootstrap/`. Run this after editing guest files.
 
-### 🔐 generate_checksums.sh
-**Generate SHA-256 checksums**
-
-Creates checksums.txt for all assets.
-
-Run this after all assets are in place.
-
+### `download_alpine.sh`
 ```bash
-./scripts/generate_checksums.sh
-```
-
-### ✅ verify_assets.sh
-**Verify all assets are present and valid**
-
-Checks:
-- File existence
-- File sizes
-- Binary architecture
-- File formats
-
-```bash
-./scripts/verify_assets.sh
-```
-
-## Usage Flow
-
-### Quick Flow (Recommended)
-```bash
-# 1. Interactive setup
-./scripts/setup_assets.sh
-# Choose option 4 (Full automated setup)
-
-# 2. Extract QEMU (manual or via Termux)
-./scripts/extract_from_termux.sh
-
-# 3. Verify
-./scripts/verify_assets.sh
-```
-
-### Manual Flow
-```bash
-# 1. Copy bootstrap
-./scripts/copy_bootstrap.sh
-
-# 2. Download Alpine
 ./scripts/download_alpine.sh
+```
+Downloads Alpine Linux 3.19.1 (aarch64) ISO inside Docker, converts to QCOW2,
+compresses with gzip -9, and places `base.qcow2.gz` in `android/app/src/main/assets/vm/`.
 
-# 3. Extract QEMU
+### `extract_from_termux.sh`
+```bash
 ./scripts/extract_from_termux.sh
+```
+Two options:
+- **Option 1 — adb pull** (fastest): requires an Android device with Termux installed
+  and `qemu-system-aarch64-headless` + `qemu-utils` packages. adb runs on the host.
+- **Option 2 — .deb extraction** (fully Docker): download `.deb` files from
+  `https://packages.termux.dev/apt/termux-main/pool/main/` into `tools/termux_packages/`,
+  then the script extracts binaries inside `debian:bookworm-slim`.
 
-# 4. Generate checksums
+### `build_qemu.sh`
+```bash
+./scripts/build_qemu.sh
+# or specify version:
+QEMU_VERSION=8.2.0 ./scripts/build_qemu.sh
+```
+Cross-compiles QEMU from source inside `debian:bookworm` targeting `aarch64-linux`.
+Takes ~20–30 minutes. Use this if you don't have Termux or `.deb` files.
+
+### `generate_checksums.sh`
+```bash
 ./scripts/generate_checksums.sh
+```
+Generates `android/app/src/main/assets/checksums.txt` (SHA-256 of all assets).
+Run after all assets are in place.
 
-# 5. Verify
+### `verify_assets.sh`
+```bash
 ./scripts/verify_assets.sh
 ```
+Validates binary type, file sizes, format, and checksums inside Docker.
+Run before building the APK.
 
-## Script Outputs
+### `test_api.sh`
+```bash
+./scripts/test_api.sh
+```
+Starts the guest API server inside a Docker-in-Docker container with a real Docker
+daemon, then runs automated HTTP tests against all endpoints. Use this to validate
+`guest/api_server.py` changes without a physical Android device.
 
-All scripts create/modify files in:
+---
+
+## Output directories
+
 ```
 android/app/src/main/assets/
-├── qemu/              # QEMU binaries
-├── vm/                # Alpine Linux image
-├── bootstrap/         # Bootstrap scripts
-└── checksums.txt      # SHA-256 hashes
+├── qemu/
+│   ├── qemu-system-aarch64   ← from extract_from_termux.sh or build_qemu.sh
+│   └── qemu-img              ← same
+├── vm/
+│   └── base.qcow2.gz         ← from download_alpine.sh
+├── bootstrap/
+│   ├── api_server.py         ← from copy_bootstrap.sh
+│   ├── init_bootstrap.sh     ← from copy_bootstrap.sh
+│   └── requirements.txt      ← from copy_bootstrap.sh
+└── checksums.txt             ← from generate_checksums.sh
+
+tools/
+├── downloads/                ← Alpine ISO + QCOW2 (intermediate, not committed)
+└── termux_packages/          ← Termux .deb files (not committed)
 ```
 
-Temporary downloads go to:
-```
-tools/downloads/       # Alpine ISO, QCOW2
-tools/termux_apk/      # Termux .deb packages
-```
-
-## Error Handling
-
-All scripts:
-- Check for required tools before running
-- Provide clear error messages
-- Exit with non-zero status on failure
-- Support both macOS and Linux
+---
 
 ## Requirements
 
-**All scripts:**
-- bash 4.0+
-- file, shasum, gzip
-
-**download_alpine.sh:**
-- qemu-img
-- wget or curl
-
-**extract_from_termux.sh:**
-- adb (option 1) or dpkg-deb/ar (option 2)
-
-**verify_assets.sh:**
-- file command
-
-## Exit Codes
-
-- `0`: Success
-- `1`: Error (missing files, tools, or validation failure)
-
-## Logs
-
-Scripts output to stdout/stderr.
-
-For debugging, run with bash -x:
-```bash
-bash -x ./scripts/download_alpine.sh
-```
+**Host:** Docker Desktop only.
+**No** wget, curl, qemu-img, ar, dpkg, shasum, file, gzip required on the host.

@@ -1,46 +1,43 @@
 #!/bin/bash
-# Copy bootstrap scripts to Android assets
+# Copy bootstrap scripts from guest/ into android assets.
+# All file operations run inside a Docker container.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 GUEST_DIR="${PROJECT_ROOT}/guest"
-ASSETS_DIR="${PROJECT_ROOT}/android/app/src/main/assets/bootstrap"
+ASSETS_BOOTSTRAP="${PROJECT_ROOT}/android/app/src/main/assets/bootstrap"
 
-echo "=== Copying Bootstrap Scripts to Assets ==="
-echo ""
+if ! command -v docker &>/dev/null; then
+    echo "ERROR: Docker is required but not found."
+    exit 1
+fi
 
-# Create assets directory
-mkdir -p "${ASSETS_DIR}"
+echo "=== Copying Bootstrap Scripts (via Docker) ==="
+mkdir -p "${ASSETS_BOOTSTRAP}"
 
-# Copy files
-echo "Copying files from ${GUEST_DIR} to ${ASSETS_DIR}..."
-
-FILES=(
-    "api_server.py"
-    "init_bootstrap.sh"
-    "requirements.txt"
-)
-
-for FILE in "${FILES[@]}"; do
-    if [ -f "${GUEST_DIR}/${FILE}" ]; then
-        cp "${GUEST_DIR}/${FILE}" "${ASSETS_DIR}/"
-        echo "  ✓ Copied ${FILE}"
-
-        # Make scripts executable
-        if [[ "${FILE}" == *.sh ]] || [[ "${FILE}" == *.py ]]; then
-            chmod +x "${ASSETS_DIR}/${FILE}"
-            echo "    (made executable)"
-        fi
+docker run --rm \
+    --platform linux/amd64 \
+    -v "${GUEST_DIR}:/src:ro" \
+    -v "${ASSETS_BOOTSTRAP}:/dst" \
+    alpine:3.19 \
+    sh -c '
+set -e
+for f in api_server.py requirements.txt init_bootstrap.sh; do
+    if [ -f "/src/$f" ]; then
+        cp "/src/$f" "/dst/$f"
+        chmod +x "/dst/$f"
+        echo "  Copied: $f ($(wc -c < /dst/$f) bytes)"
     else
-        echo "  ⚠️  ${FILE} not found in ${GUEST_DIR}"
+        echo "  WARNING: $f not found in /src — skipping"
     fi
 done
 
 echo ""
-echo "=== Bootstrap Assets ==="
-ls -lh "${ASSETS_DIR}"
+echo "Files in /dst:"
+ls -lh /dst/
+'
 
 echo ""
-echo "✅ Bootstrap scripts copied!"
+echo "✅  Bootstrap scripts copied to android/app/src/main/assets/bootstrap/"

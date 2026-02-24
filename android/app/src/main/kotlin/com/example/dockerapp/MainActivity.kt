@@ -5,10 +5,12 @@ import android.os.Bundle
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.dockerapp/vm"
     private lateinit var vmManager: VmManager
+    private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -18,83 +20,110 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "startVm" -> {
-                    try {
-                        startVmService()
-                        vmManager.startVm()
-                        result.success(null)
-                    } catch (e: Exception) {
-                        result.error("VM_START_ERROR", e.message, null)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    // Heavy ops run on background thread; result posted back on main thread
+                    "startVm" -> executor.execute {
+                        try {
+                            startVmService()
+                            vmManager.startVm()
+                            runOnUiThread { result.success(null) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("VM_START_ERROR", e.message, null) }
+                        }
                     }
-                }
-                "stopVm" -> {
-                    try {
-                        vmManager.stopVm()
-                        stopVmService()
-                        result.success(null)
-                    } catch (e: Exception) {
-                        result.error("VM_STOP_ERROR", e.message, null)
+
+                    "stopVm" -> executor.execute {
+                        try {
+                            vmManager.stopVm()
+                            stopVmService()
+                            runOnUiThread { result.success(null) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("VM_STOP_ERROR", e.message, null) }
+                        }
                     }
-                }
-                "checkHealth" -> {
-                    try {
-                        val healthy = vmManager.checkHealth()
-                        result.success(healthy)
-                    } catch (e: Exception) {
-                        result.success(false)
+
+                    "checkHealth" -> executor.execute {
+                        try {
+                            val healthy = vmManager.checkHealth()
+                            runOnUiThread { result.success(healthy) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.success(false) }
+                        }
                     }
-                }
-                "getVmStatus" -> {
-                    try {
-                        val status = vmManager.getStatus()
-                        result.success(status)
-                    } catch (e: Exception) {
-                        result.success("unknown")
+
+                    "getVmStatus" -> {
+                        // Lightweight — no I/O, safe on main thread
+                        try {
+                            result.success(vmManager.getStatus())
+                        } catch (e: Exception) {
+                            result.success("unknown")
+                        }
                     }
-                }
-                "startContainer" -> {
-                    try {
-                        val image = call.argument<String>("image") ?: throw IllegalArgumentException("image required")
-                        val name = call.argument<String>("name") ?: throw IllegalArgumentException("name required")
-                        val cmd = call.argument<List<String>>("cmd") ?: emptyList()
-                        vmManager.startContainer(image, name, cmd)
-                        result.success(null)
-                    } catch (e: Exception) {
-                        result.error("CONTAINER_START_ERROR", e.message, null)
+
+                    "startContainer" -> executor.execute {
+                        try {
+                            val image = call.argument<String>("image")
+                                ?: return@execute runOnUiThread {
+                                    result.error("CONTAINER_START_ERROR", "image required", null)
+                                }
+                            val name = call.argument<String>("name")
+                                ?: return@execute runOnUiThread {
+                                    result.error("CONTAINER_START_ERROR", "name required", null)
+                                }
+                            val cmd = call.argument<List<String>>("cmd") ?: emptyList()
+                            vmManager.startContainer(image, name, cmd)
+                            runOnUiThread { result.success(null) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("CONTAINER_START_ERROR", e.message, null) }
+                        }
                     }
-                }
-                "stopContainer" -> {
-                    try {
-                        val name = call.argument<String>("name") ?: throw IllegalArgumentException("name required")
-                        vmManager.stopContainer(name)
-                        result.success(null)
-                    } catch (e: Exception) {
-                        result.error("CONTAINER_STOP_ERROR", e.message, null)
+
+                    "stopContainer" -> executor.execute {
+                        try {
+                            val name = call.argument<String>("name")
+                                ?: return@execute runOnUiThread {
+                                    result.error("CONTAINER_STOP_ERROR", "name required", null)
+                                }
+                            vmManager.stopContainer(name)
+                            runOnUiThread { result.success(null) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("CONTAINER_STOP_ERROR", e.message, null) }
+                        }
                     }
-                }
-                "listContainers" -> {
-                    try {
-                        val containers = vmManager.listContainers()
-                        result.success(containers)
-                    } catch (e: Exception) {
-                        result.error("CONTAINER_LIST_ERROR", e.message, null)
+
+                    "listContainers" -> executor.execute {
+                        try {
+                            val containers = vmManager.listContainers()
+                            runOnUiThread { result.success(containers) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("CONTAINER_LIST_ERROR", e.message, null) }
+                        }
                     }
-                }
-                "getLogs" -> {
-                    try {
-                        val name = call.argument<String>("name") ?: throw IllegalArgumentException("name required")
-                        val tail = call.argument<Int>("tail") ?: 100
-                        val logs = vmManager.getLogs(name, tail)
-                        result.success(logs)
-                    } catch (e: Exception) {
-                        result.error("LOGS_ERROR", e.message, null)
+
+                    "getLogs" -> executor.execute {
+                        try {
+                            val name = call.argument<String>("name")
+                                ?: return@execute runOnUiThread {
+                                    result.error("LOGS_ERROR", "name required", null)
+                                }
+                            val tail = call.argument<Int>("tail") ?: 100
+                            val logs = vmManager.getLogs(name, tail)
+                            runOnUiThread { result.success(logs) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("LOGS_ERROR", e.message, null) }
+                        }
                     }
+
+                    else -> result.notImplemented()
                 }
-                else -> result.notImplemented()
             }
-        }
+    }
+
+    override fun onDestroy() {
+        executor.shutdown()
+        super.onDestroy()
     }
 
     private fun startVmService() {

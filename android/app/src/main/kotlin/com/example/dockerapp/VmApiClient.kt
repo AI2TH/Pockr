@@ -9,21 +9,25 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
-class VmApiClient {
+class VmApiClient(private val token: String) {
     private val TAG = "VmApiClient"
     private val baseUrl = "http://127.0.0.1:7080"
     private val gson = Gson()
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
+
+    private fun Request.Builder.withAuth(): Request.Builder =
+        header("Authorization", "Bearer $token")
 
     fun checkHealth(): Boolean {
         return try {
             val request = Request.Builder()
                 .url("$baseUrl/health")
+                .withAuth()
                 .get()
                 .build()
 
@@ -32,65 +36,59 @@ class VmApiClient {
             response.close()
             success
         } catch (e: Exception) {
-            Log.e(TAG, "Health check failed", e)
+            Log.e(TAG, "Health check failed: ${e.message}")
             false
         }
     }
 
     fun startContainer(image: String, name: String, cmd: List<String>) {
-        try {
-            val json = JsonObject().apply {
-                addProperty("image", image)
-                addProperty("name", name)
-                add("cmd", gson.toJsonTree(cmd))
-            }
-
-            val body = gson.toJson(json).toRequestBody("application/json".toMediaType())
-            val request = Request.Builder()
-                .url("$baseUrl/containers/start")
-                .post(body)
-                .build()
-
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                throw Exception("Failed to start container: ${response.code}")
-            }
-            response.close()
-            Log.d(TAG, "Container started: $name")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error starting container", e)
-            throw e
+        val json = JsonObject().apply {
+            addProperty("image", image)
+            addProperty("name", name)
+            add("cmd", gson.toJsonTree(cmd))
         }
+
+        val body = gson.toJson(json).toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url("$baseUrl/containers/start")
+            .withAuth()
+            .post(body)
+            .build()
+
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+            val err = response.body?.string() ?: response.code.toString()
+            response.close()
+            throw Exception("Failed to start container: $err")
+        }
+        response.close()
+        Log.d(TAG, "Container started: $name")
     }
 
     fun stopContainer(name: String) {
-        try {
-            val json = JsonObject().apply {
-                addProperty("name", name)
-            }
+        val json = JsonObject().apply { addProperty("name", name) }
+        val body = gson.toJson(json).toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url("$baseUrl/containers/stop")
+            .withAuth()
+            .post(body)
+            .build()
 
-            val body = gson.toJson(json).toRequestBody("application/json".toMediaType())
-            val request = Request.Builder()
-                .url("$baseUrl/containers/stop")
-                .post(body)
-                .build()
-
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                throw Exception("Failed to stop container: ${response.code}")
-            }
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+            val err = response.body?.string() ?: response.code.toString()
             response.close()
-            Log.d(TAG, "Container stopped: $name")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping container", e)
-            throw e
+            throw Exception("Failed to stop container: $err")
         }
+        response.close()
+        Log.d(TAG, "Container stopped: $name")
     }
 
     fun listContainers(): List<Map<String, Any>> {
         return try {
             val request = Request.Builder()
                 .url("$baseUrl/containers")
+                .withAuth()
                 .get()
                 .build()
 
@@ -103,10 +101,10 @@ class VmApiClient {
             val json = response.body?.string() ?: "[]"
             response.close()
 
-            val list = gson.fromJson(json, List::class.java) as? List<Map<String, Any>> ?: emptyList()
-            list
+            @Suppress("UNCHECKED_CAST")
+            gson.fromJson(json, List::class.java) as? List<Map<String, Any>> ?: emptyList()
         } catch (e: Exception) {
-            Log.e(TAG, "Error listing containers", e)
+            Log.e(TAG, "Error listing containers: ${e.message}")
             emptyList()
         }
     }
@@ -115,19 +113,16 @@ class VmApiClient {
         return try {
             val request = Request.Builder()
                 .url("$baseUrl/logs?name=$name&tail=$tail")
+                .withAuth()
                 .get()
                 .build()
 
             val response = client.newCall(request).execute()
-            val logs = if (response.isSuccessful) {
-                response.body?.string() ?: ""
-            } else {
-                ""
-            }
+            val logs = if (response.isSuccessful) response.body?.string() ?: "" else ""
             response.close()
             logs
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting logs", e)
+            Log.e(TAG, "Error getting logs: ${e.message}")
             ""
         }
     }

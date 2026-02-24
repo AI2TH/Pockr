@@ -1,31 +1,94 @@
 #!/usr/bin/env python3
 """
 FastAPI server for Docker container management inside Alpine Linux VM.
-Runs on guest 127.0.0.1:7080 and is accessible from Android host via hostfwd.
+Runs on guest 127.0.0.1:7080, accessible from Android host via QEMU hostfwd.
+
+Token is injected by the Android app via QEMU fw_cfg:
+  -fw_cfg name=opt/api_token,string=<TOKEN>
+Guest reads it from: /sys/firmware/qemu_fw_cfg/by_name/opt/api_token/raw
 """
 
-from fastapi import FastAPI, HTTPException, Header
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import List, Optional
+import os
 import subprocess
-import uvicorn
 import logging
+from typing import List, Optional
 
-# Configure logging
+from fastapi import Depends, FastAPI, HTTPException, Header
+from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Docker VM API", version="1.0.0")
 
-# TODO: Load this from a secure location seeded by Android app
-API_TOKEN = "insecure-token-replace-me"
+# ---------------------------------------------------------------------------
+# Token loading — checked once at startup
+# ---------------------------------------------------------------------------
+
+FW_CFG_TOKEN_PATH = "/sys/firmware/qemu_fw_cfg/by_name/opt/api_token/raw"
+TOKEN_FILE_PATH = "/bootstrap/token"
+
+
+def _load_token() -> str:
+    # 1. Try fw_cfg (primary — injected by Android app via -fw_cfg QEMU flag)
+    try:
+        with open(FW_CFG_TOKEN_PATH, "r") as f:
+            token = f.read().strip()
+            if token:
+                logger.info("Loaded API token from fw_cfg")
+                return token
+    except OSError:
+        pass
+
+    # 2. Try token file (written to bootstrap dir by asset extraction)
+    try:
+        with open(TOKEN_FILE_PATH, "r") as f:
+            token = f.read().strip()
+            if token:
+                logger.info("Loaded API token from %s", TOKEN_FILE_PATH)
+                return token
+    except OSError:
+        pass
+
+    # 3. Environment variable fallback (useful for local development)
+    token = os.environ.get("API_TOKEN", "").strip()
+    if token:
+        logger.info("Loaded API token from environment")
+        return token
+
+    logger.warning(
+        "No API token found — auth will reject all requests. "
+        "Check that QEMU was launched with -fw_cfg name=opt/api_token,string=<TOKEN>"
+    )
+    return ""
+
+
+API_TOKEN = _load_token()
+
+# ---------------------------------------------------------------------------
+# Auth dependency
+# ---------------------------------------------------------------------------
+
+
+def require_auth(authorization: Optional[str] = Header(None)) -> None:
+    if not API_TOKEN:
+        raise HTTPException(status_code=503, detail="Server not ready: token not configured")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    if authorization[len("Bearer "):] != API_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# ---------------------------------------------------------------------------
+# Request/response models
+# ---------------------------------------------------------------------------
 
 
 class ContainerStartRequest(BaseModel):
     image: str
     name: str
-    cmd: List[str]
+    cmd: List[str] = []
     env: Optional[List[dict]] = []
     ports: Optional[List[dict]] = []
 
@@ -34,216 +97,172 @@ class ContainerStopRequest(BaseModel):
     name: str
 
 
-class ContainerInfo(BaseModel):
-    name: str
+class ImagePullRequest(BaseModel):
     image: str
-    status: str
-    ports: List[str] = []
 
 
-def verify_token(authorization: Optional[str] = Header(None)):
-    """Simple Bearer token authentication."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+class ExecRequest(BaseModel):
+    name: str
+    cmd: str
 
-    token = authorization.replace("Bearer ", "")
-    if token != API_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check — no auth required so the app can poll before token is verified."""
     try:
-        # Check if Docker is running
         result = subprocess.run(
             ["docker", "info"],
-            capture_output=True,
-            text=True,
-            timeout=5
+            capture_output=True, text=True, timeout=5
         )
-        runtime_available = result.returncode == 0
+        runtime_ok = result.returncode == 0
 
-        # Get Docker version
-        version_result = subprocess.run(
+        ver = subprocess.run(
             ["docker", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5
+            capture_output=True, text=True, timeout=5
         )
-        version = version_result.stdout.strip() if version_result.returncode == 0 else "unknown"
+        version = ver.stdout.strip() if ver.returncode == 0 else "unknown"
 
         return {
-            "status": "ok" if runtime_available else "degraded",
+            "status": "ok" if runtime_ok else "degraded",
             "runtime": "docker",
-            "version": version
+            "version": version,
         }
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return JSONResponse(
-            status_code=503,
-            content={"status": "error", "message": str(e)}
-        )
+        logger.error("Health check error: %s", e)
+        return JSONResponse(status_code=503, content={"status": "error", "message": str(e)})
 
 
-@app.get("/containers", response_model=List[ContainerInfo])
+@app.get("/containers", dependencies=[Depends(require_auth)])
 async def list_containers():
-    """List all running containers."""
+    """List running containers."""
     try:
         result = subprocess.run(
             ["docker", "ps", "--format", "{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}"],
-            capture_output=True,
-            text=True,
-            check=True
+            capture_output=True, text=True, check=True
         )
-
         containers = []
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().splitlines():
             if not line:
                 continue
-
-            parts = line.split('|')
+            parts = line.split("|")
             if len(parts) >= 3:
-                containers.append(ContainerInfo(
-                    name=parts[0],
-                    image=parts[1],
-                    status=parts[2],
-                    ports=[parts[3]] if len(parts) > 3 and parts[3] else []
-                ))
-
+                containers.append({
+                    "name": parts[0],
+                    "image": parts[1],
+                    "status": parts[2],
+                    "ports": [parts[3]] if len(parts) > 3 and parts[3] else [],
+                })
         return containers
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to list containers: {e}")
-        raise HTTPException(status_code=500, detail=f"Docker command failed: {e.stderr}")
+        raise HTTPException(status_code=500, detail=f"Docker error: {e.stderr}")
     except Exception as e:
-        logger.error(f"Error listing containers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/containers/start")
-async def start_container(request: ContainerStartRequest):
-    """Start a new container."""
+@app.post("/containers/start", dependencies=[Depends(require_auth)])
+async def start_container(req: ContainerStartRequest):
+    """Start a container."""
+    cmd = ["docker", "run", "-d", "--name", req.name]
+
+    for env in (req.env or []):
+        if "key" in env and "value" in env:
+            cmd += ["-e", f"{env['key']}={env['value']}"]
+
+    for port in (req.ports or []):
+        if "host" in port and "container" in port:
+            cmd += ["-p", f"{port['host']}:{port['container']}"]
+
+    cmd.append(req.image)
+    cmd.extend(req.cmd)
+
+    logger.info("Starting container: %s", " ".join(cmd))
     try:
-        # Build docker run command
-        cmd = ["docker", "run", "-d", "--name", request.name]
-
-        # Add environment variables
-        for env in request.env:
-            if 'key' in env and 'value' in env:
-                cmd.extend(["-e", f"{env['key']}={env['value']}"])
-
-        # Add port mappings
-        for port in request.ports:
-            if 'host' in port and 'container' in port:
-                cmd.extend(["-p", f"{port['host']}:{port['container']}"])
-
-        # Add image and command
-        cmd.append(request.image)
-        cmd.extend(request.cmd)
-
-        logger.info(f"Starting container: {' '.join(cmd)}")
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30
-        )
-
-        container_id = result.stdout.strip()
-
-        return {
-            "status": "started",
-            "name": request.name,
-            "id": container_id
-        }
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
+        return {"status": "started", "name": req.name, "id": result.stdout.strip()}
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to start container: {e.stderr}")
-        raise HTTPException(status_code=500, detail=f"Docker command failed: {e.stderr}")
+        raise HTTPException(status_code=500, detail=f"Docker error: {e.stderr}")
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Container start timed out")
     except Exception as e:
-        logger.error(f"Error starting container: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/containers/stop")
-async def stop_container(request: ContainerStopRequest):
-    """Stop a running container."""
+@app.post("/containers/stop", dependencies=[Depends(require_auth)])
+async def stop_container(req: ContainerStopRequest):
+    """Stop a container."""
+    try:
+        subprocess.run(
+            ["docker", "stop", req.name],
+            capture_output=True, text=True, check=True, timeout=15
+        )
+        return {"status": "stopped", "name": req.name}
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Docker error: {e.stderr}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/images/pull", dependencies=[Depends(require_auth)])
+async def pull_image(req: ImagePullRequest):
+    """Pull a Docker image."""
     try:
         result = subprocess.run(
-            ["docker", "stop", request.name],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10
+            ["docker", "pull", req.image],
+            capture_output=True, text=True, check=True, timeout=300
         )
-
-        return {
-            "status": "stopped",
-            "name": request.name
-        }
+        return {"status": "pulled", "image": req.image, "output": result.stdout}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Image pull timed out")
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to stop container: {e.stderr}")
-        raise HTTPException(status_code=500, detail=f"Docker command failed: {e.stderr}")
+        raise HTTPException(status_code=500, detail=f"Docker error: {e.stderr}")
     except Exception as e:
-        logger.error(f"Error stopping container: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/logs")
+@app.get("/logs", dependencies=[Depends(require_auth)])
 async def get_logs(name: str, tail: int = 100):
     """Get container logs."""
     try:
         result = subprocess.run(
             ["docker", "logs", "--tail", str(tail), name],
-            capture_output=True,
-            text=True,
-            check=True
+            capture_output=True, text=True, check=True
         )
-
-        return result.stdout
+        return PlainTextResponse(result.stdout)
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to get logs: {e.stderr}")
-        raise HTTPException(status_code=500, detail=f"Docker command failed: {e.stderr}")
+        raise HTTPException(status_code=500, detail=f"Docker error: {e.stderr}")
     except Exception as e:
-        logger.error(f"Error getting logs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/images/pull")
-async def pull_image(image: str):
-    """Pull a Docker image."""
+@app.post("/exec", dependencies=[Depends(require_auth)])
+async def exec_in_container(req: ExecRequest):
+    """Execute a command in a running container."""
     try:
         result = subprocess.run(
-            ["docker", "pull", image],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=300  # 5 minutes for large images
+            ["docker", "exec", req.name, "sh", "-c", req.cmd],
+            capture_output=True, text=True, timeout=30
         )
-
         return {
-            "status": "pulled",
-            "image": image,
-            "output": result.stdout
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exitCode": result.returncode,
         }
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Image pull timed out")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to pull image: {e.stderr}")
-        raise HTTPException(status_code=500, detail=f"Docker command failed: {e.stderr}")
+        raise HTTPException(status_code=504, detail="Exec timed out")
     except Exception as e:
-        logger.error(f"Error pulling image: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
+    import uvicorn
     logger.info("Starting Docker VM API server on 127.0.0.1:7080")
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=7080,
-        log_level="info"
-    )
+    uvicorn.run(app, host="127.0.0.1", port=7080, log_level="info")

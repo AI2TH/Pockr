@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -93,23 +94,33 @@ class VmState extends ChangeNotifier {
   String _status = 'stopped';
   bool _isHealthy = false;
   bool _isLoading = false;
+  String? _errorMessage;
+
+  Timer? _healthPollTimer;
 
   String get status => _status;
   bool get isHealthy => _isHealthy;
   bool get isLoading => _isLoading;
+  String? get errorMessage => _errorMessage;
+
+  // -------------------------------------------------------------------------
+  // VM lifecycle
+  // -------------------------------------------------------------------------
 
   Future<void> startVm() async {
     _isLoading = true;
     _status = 'starting';
+    _errorMessage = null;
     notifyListeners();
 
     try {
       await VmPlatform.startVm();
       _status = 'running';
-      await Future.delayed(const Duration(seconds: 2));
-      await checkHealth();
+      notifyListeners();
+      _startHealthPolling();
     } catch (e) {
       _status = 'error';
+      _errorMessage = e.toString();
       debugPrint("Error starting VM: $e");
     } finally {
       _isLoading = false;
@@ -121,11 +132,15 @@ class VmState extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
+    _stopHealthPolling();
+
     try {
       await VmPlatform.stopVm();
       _status = 'stopped';
       _isHealthy = false;
+      _errorMessage = null;
     } catch (e) {
+      _errorMessage = e.toString();
       debugPrint("Error stopping VM: $e");
     } finally {
       _isLoading = false;
@@ -150,11 +165,47 @@ class VmState extends ChangeNotifier {
     try {
       _status = await VmPlatform.getVmStatus();
       if (_status == 'running') {
+        _startHealthPolling();
         await checkHealth();
+      } else {
+        _stopHealthPolling();
       }
       notifyListeners();
     } catch (e) {
       debugPrint("Error refreshing status: $e");
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Periodic health polling
+  // -------------------------------------------------------------------------
+
+  void _startHealthPolling() {
+    _healthPollTimer?.cancel();
+    // Poll every 5 seconds while the VM is expected to be running
+    _healthPollTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (_status != 'running' && _status != 'starting') {
+        _stopHealthPolling();
+        return;
+      }
+      final healthy = await VmPlatform.checkHealth();
+      if (healthy != _isHealthy) {
+        _isHealthy = healthy;
+        // If health check starts failing while we think VM is running,
+        // reflect that but don't change status (VM may still be booting)
+        notifyListeners();
+      }
+    });
+  }
+
+  void _stopHealthPolling() {
+    _healthPollTimer?.cancel();
+    _healthPollTimer = null;
+  }
+
+  @override
+  void dispose() {
+    _stopHealthPolling();
+    super.dispose();
   }
 }

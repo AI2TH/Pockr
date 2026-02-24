@@ -1,5 +1,7 @@
 #!/bin/bash
-# Download and prepare Alpine Linux image for the Docker VM app
+# Download and prepare Alpine Linux image for the Docker VM app.
+# All download and conversion steps run inside a Docker container —
+# no host-side qemu-img or wget/curl required beyond Docker itself.
 
 set -e
 
@@ -11,110 +13,98 @@ ISO_URL="${ALPINE_MIRROR}/v${ALPINE_VERSION}/releases/${ARCH}/alpine-virt-${ALPI
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ASSETS_DIR="${PROJECT_ROOT}/android/app/src/main/assets/vm"
-DOWNLOAD_DIR="${PROJECT_ROOT}/tools/downloads"
+ASSETS_VM_DIR="${PROJECT_ROOT}/android/app/src/main/assets/vm"
+WORK_DIR="${PROJECT_ROOT}/tools/downloads"
 
 echo "=== Alpine Linux Image Download and Preparation ==="
-echo "Version: ${ALPINE_RELEASE}"
-echo "Architecture: ${ARCH}"
+echo "Version : ${ALPINE_RELEASE}"
+echo "Arch    : ${ARCH}"
+echo "Work dir: ${WORK_DIR}"
 echo ""
 
-# Create directories
-mkdir -p "${DOWNLOAD_DIR}"
-mkdir -p "${ASSETS_DIR}"
+mkdir -p "${WORK_DIR}" "${ASSETS_VM_DIR}"
 
-ISO_FILE="${DOWNLOAD_DIR}/alpine-virt-${ALPINE_RELEASE}-${ARCH}.iso"
-QCOW2_FILE="${DOWNLOAD_DIR}/base.qcow2"
-COMPRESSED_FILE="${ASSETS_DIR}/base.qcow2.gz"
+# Verify Docker is available
+if ! command -v docker &>/dev/null; then
+    echo "ERROR: Docker is required but not found. Install Docker Desktop and try again."
+    exit 1
+fi
 
-# Download ISO if not already downloaded
+# ---------------------------------------------------------------------------
+# Run all download + conversion steps inside a Docker container.
+# Uses debian:bookworm-slim with qemu-utils and wget.
+# The WORK_DIR is mounted so outputs land on the host.
+# ---------------------------------------------------------------------------
+
+echo "Launching Docker container for download and conversion..."
+
+docker run --rm \
+    --platform linux/amd64 \
+    -v "${WORK_DIR}:/work" \
+    -e "ISO_URL=${ISO_URL}" \
+    -e "ALPINE_RELEASE=${ALPINE_RELEASE}" \
+    -e "ARCH=${ARCH}" \
+    debian:bookworm-slim \
+    bash -c '
+set -e
+echo "Installing tools..."
+apt-get update -qq
+apt-get install -y -qq wget qemu-utils gzip coreutils
+
+ISO_FILE="/work/alpine-virt-${ALPINE_RELEASE}-${ARCH}.iso"
+QCOW2_FILE="/work/base.qcow2"
+COMPRESSED_FILE="/work/base.qcow2.gz"
+
+# Download ISO
 if [ -f "${ISO_FILE}" ]; then
-    echo "Alpine ISO already downloaded: ${ISO_FILE}"
+    echo "ISO already downloaded: ${ISO_FILE}"
 else
-    echo "Downloading Alpine Linux ISO..."
-    if command -v wget &> /dev/null; then
-        wget -O "${ISO_FILE}" "${ISO_URL}"
-    elif command -v curl &> /dev/null; then
-        curl -L -o "${ISO_FILE}" "${ISO_URL}"
-    else
-        echo "ERROR: Neither wget nor curl found. Please install one."
-        exit 1
-    fi
-    echo "Download complete!"
+    echo "Downloading Alpine Linux ${ALPINE_RELEASE} (${ARCH})..."
+    wget -q --show-progress -O "${ISO_FILE}" "${ISO_URL}"
+    echo "Download complete."
 fi
 
-# Verify ISO size
+# Verify minimum size (Alpine virt ISO is ~50 MB)
 ISO_SIZE=$(wc -c < "${ISO_FILE}")
-echo "ISO size: $(numfmt --to=iec-i --suffix=B ${ISO_SIZE})"
-
-if [ ${ISO_SIZE} -lt 10000000 ]; then
-    echo "ERROR: ISO file is too small. Download may have failed."
+if [ "${ISO_SIZE}" -lt 10000000 ]; then
+    echo "ERROR: ISO too small (${ISO_SIZE} bytes) — download may have failed."
     exit 1
 fi
 
-# Check for qemu-img
-if ! command -v qemu-img &> /dev/null; then
-    echo ""
-    echo "WARNING: qemu-img not found!"
-    echo "Please install QEMU tools:"
-    echo "  macOS: brew install qemu"
-    echo "  Ubuntu/Debian: sudo apt-get install qemu-utils"
-    echo "  Fedora: sudo dnf install qemu-img"
-    echo ""
-    echo "After installing, run this script again."
-    exit 1
-fi
+# Convert ISO → QCOW2
+echo "Converting ISO to QCOW2..."
+qemu-img convert -f raw -O qcow2 "${ISO_FILE}" "${QCOW2_FILE}"
 
-# Convert ISO to QCOW2
-if [ -f "${QCOW2_FILE}" ]; then
-    echo "QCOW2 image already exists: ${QCOW2_FILE}"
-    read -p "Overwrite? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Skipping conversion..."
-    else
-        echo "Converting ISO to QCOW2..."
-        qemu-img convert -f raw -O qcow2 "${ISO_FILE}" "${QCOW2_FILE}"
-    fi
-else
-    echo "Converting ISO to QCOW2..."
-    qemu-img convert -f raw -O qcow2 "${ISO_FILE}" "${QCOW2_FILE}"
-fi
-
-# Show QCOW2 info
-echo ""
-echo "QCOW2 image info:"
+echo "QCOW2 info:"
 qemu-img info "${QCOW2_FILE}"
 
-# Compress QCOW2
-echo ""
-echo "Compressing QCOW2 image..."
-if [ -f "${COMPRESSED_FILE}" ]; then
-    echo "Compressed image already exists: ${COMPRESSED_FILE}"
-    read -p "Overwrite? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Skipping compression..."
-    else
-        echo "Compressing with gzip -9..."
-        gzip -9 -c "${QCOW2_FILE}" > "${COMPRESSED_FILE}"
-    fi
-else
-    echo "Compressing with gzip -9..."
-    gzip -9 -c "${QCOW2_FILE}" > "${COMPRESSED_FILE}"
-fi
+# Compress
+echo "Compressing (gzip -9)..."
+gzip -9 -c "${QCOW2_FILE}" > "${COMPRESSED_FILE}"
 
-# Show final sizes
+# Checksums
 echo ""
-echo "=== Summary ==="
-echo "Original ISO:     $(ls -lh ${ISO_FILE} | awk '{print $5}')"
-echo "QCOW2 image:      $(ls -lh ${QCOW2_FILE} | awk '{print $5}')"
-echo "Compressed:       $(ls -lh ${COMPRESSED_FILE} | awk '{print $5}')"
+echo "=== Checksums ==="
+sha256sum "${COMPRESSED_FILE}"
+sha256sum "${QCOW2_FILE}"
+
 echo ""
-echo "Compressed image saved to:"
-echo "  ${COMPRESSED_FILE}"
+echo "=== Sizes ==="
+ls -lh "${ISO_FILE}" "${QCOW2_FILE}" "${COMPRESSED_FILE}"
 echo ""
-echo "SHA-256 checksum:"
-shasum -a 256 "${COMPRESSED_FILE}"
+echo "Done inside container."
+'
+
 echo ""
-echo "✅ Alpine Linux image ready!"
+echo "=== Copying compressed image to assets ==="
+cp "${WORK_DIR}/base.qcow2.gz" "${ASSETS_VM_DIR}/base.qcow2.gz"
+echo "Copied to: ${ASSETS_VM_DIR}/base.qcow2.gz"
+
+echo ""
+echo "SHA-256 (assets copy):"
+shasum -a 256 "${ASSETS_VM_DIR}/base.qcow2.gz"
+
+echo ""
+echo "✅  Alpine Linux image ready at android/app/src/main/assets/vm/base.qcow2.gz"
+echo ""
+echo "Next: run scripts/extract_from_termux.sh to get QEMU binaries."
