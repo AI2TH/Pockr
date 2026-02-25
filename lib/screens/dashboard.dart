@@ -26,7 +26,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       body: Consumer<VmState>(
         builder: (context, vmState, child) {
-          return Padding(
+          return SingleChildScrollView(
             padding: const EdgeInsets.all(16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -34,6 +34,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _buildStatusCard(vmState),
                 const SizedBox(height: 16),
                 _buildHealthCard(vmState),
+                if (vmState.errorMessage != null) ...[
+                  const SizedBox(height: 12),
+                  _buildErrorCard(vmState.errorMessage!),
+                ],
                 const SizedBox(height: 24),
                 _buildActionButtons(vmState),
                 const SizedBox(height: 24),
@@ -144,12 +148,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildErrorCard(String message) {
+    return Card(
+      color: Colors.red.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(fontSize: 12, color: Colors.red),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildActionButtons(VmState vmState) {
     return Row(
       children: [
         Expanded(
           child: ElevatedButton.icon(
-            onPressed: vmState.status == 'stopped' && !vmState.isLoading
+            onPressed: (vmState.status == 'stopped' || vmState.status == 'error') &&
+                    !vmState.isLoading
                 ? () => vmState.startVm()
                 : null,
             icon: const Icon(Icons.play_arrow),

@@ -39,6 +39,11 @@ android {
         main.java.srcDirs += 'src/main/kotlin'
     }
 
+    aaptOptions {
+        // Prevent aapt2 from decompressing .gz assets — we handle decompression at runtime
+        noCompress "gz"
+    }
+
     defaultConfig {
         applicationId "com.example.dockerapp"
         minSdk 26

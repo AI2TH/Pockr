@@ -180,10 +180,17 @@ class VmManager(private val context: Context) {
                 .onFailure { Log.w(TAG, "efi.fd not found — will skip UEFI firmware") }
         }
 
-        // Base image (gzip-compressed)
+        // Base image — aapt2 may auto-decompress .gz assets and drop the extension.
+        // Try the already-decompressed path first, fall back to .gz.
         val baseQcow2 = File(vmDir, "base.qcow2")
         if (!baseQcow2.exists()) {
-            extractAndDecompress("vm/base.qcow2.gz", baseQcow2)
+            try {
+                extractAsset("vm/base.qcow2", baseQcow2)
+                Log.d(TAG, "Extracted base.qcow2 (aapt2 pre-decompressed)")
+            } catch (_: Exception) {
+                extractAndDecompress("vm/base.qcow2.gz", baseQcow2)
+                Log.d(TAG, "Extracted + decompressed base.qcow2.gz")
+            }
         }
 
         // Bootstrap scripts
