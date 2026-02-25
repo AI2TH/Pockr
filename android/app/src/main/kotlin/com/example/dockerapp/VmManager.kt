@@ -15,9 +15,15 @@ class VmManager(private val context: Context) {
     private var isRunning = false
 
     private val filesDir: File get() = context.filesDir
-    private val qemuDir: File get() = File(filesDir, "qemu")
     private val vmDir: File get() = File(filesDir, "vm")
     private val bootstrapDir: File get() = File(filesDir, "bootstrap")
+
+    // QEMU binaries are installed by Android into nativeLibraryDir as .so files.
+    // This directory is SELinux-labelled exec_type — safe to execute on Android 10+.
+    // libqemu.so      = qemu-system-aarch64
+    // libqemu_img.so  = qemu-img
+    private val nativeLibDir: File
+        get() = File(context.applicationInfo.nativeLibraryDir)
 
     // Flutter SharedPreferences stores keys with "flutter." prefix
     private val flutterPrefs: SharedPreferences
@@ -44,7 +50,7 @@ class VmManager(private val context: Context) {
         }
 
         val qemuBin = resolveQemuBinary()
-        qemuBin.setExecutable(true, true)
+        Log.d(TAG, "QEMU binary: ${qemuBin.absolutePath}")
 
         val vcpu = flutterPrefs.getInt("flutter.vcpu_count", 2)
         val ramMb = flutterPrefs.getInt("flutter.ram_mb", 2048)
@@ -66,8 +72,8 @@ class VmManager(private val context: Context) {
         Log.d(TAG, "QEMU command: ${cmd.joinToString(" ")}")
 
         vmProcess = ProcessBuilder(cmd).apply {
-            // Add qemuDir to LD_LIBRARY_PATH so QEMU can find bundled shared libs
-            environment()["LD_LIBRARY_PATH"] = qemuDir.absolutePath
+            // Add nativeLibDir to LD_LIBRARY_PATH for any shared libs QEMU needs
+            environment()["LD_LIBRARY_PATH"] = nativeLibDir.absolutePath
             redirectErrorStream(true)
         }.start()
 
@@ -97,17 +103,13 @@ class VmManager(private val context: Context) {
 
     fun checkHealth(): Boolean {
         if (!isRunning) return false
-        // Also verify the process hasn't exited unexpectedly
         vmProcess?.let {
             try {
                 it.exitValue()
-                // exitValue() returns without throwing = process has exited
                 Log.w(TAG, "QEMU process exited unexpectedly")
                 isRunning = false
                 return false
-            } catch (_: IllegalThreadStateException) {
-                // Still running — expected
-            }
+            } catch (_: IllegalThreadStateException) { }
         }
         return apiClient.checkHealth()
     }
@@ -150,37 +152,22 @@ class VmManager(private val context: Context) {
     }
 
     // -------------------------------------------------------------------------
-    // Asset extraction
+    // Asset extraction (vm images + bootstrap scripts only)
+    // QEMU binaries are handled by Android via jniLibs — no manual extraction
     // -------------------------------------------------------------------------
 
     private fun assetsReady(): Boolean {
-        val marker = File(filesDir, "assets_extracted.v1")
+        val marker = File(filesDir, "assets_extracted.v2")
         return marker.exists()
-            && File(qemuDir, qemuBinaryName()).exists()
+            && resolveQemuBinary().exists()
             && File(vmDir, "base.qcow2").exists()
     }
 
     private fun extractAssets() {
-        qemuDir.mkdirs()
         vmDir.mkdirs()
         bootstrapDir.mkdirs()
 
-        // QEMU main binary
-        extractAsset("qemu/${qemuBinaryName()}", File(qemuDir, qemuBinaryName()))
-
-        // Optional supporting binaries
-        listOf("qemu-img").forEach { bin ->
-            runCatching { extractAsset("qemu/$bin", File(qemuDir, bin)) }
-                .onFailure { Log.w(TAG, "Optional asset qemu/$bin not found") }
-        }
-
-        // Optional ARM firmware
-        if (isArm64()) {
-            runCatching { extractAsset("qemu/efi.fd", File(qemuDir, "efi.fd")) }
-                .onFailure { Log.w(TAG, "efi.fd not found — will skip UEFI firmware") }
-        }
-
-        // Base image — aapt2 may auto-decompress .gz assets and drop the extension.
+        // Base image — aapt2 decompresses .gz assets and drops the extension.
         // Try the already-decompressed path first, fall back to .gz.
         val baseQcow2 = File(vmDir, "base.qcow2")
         if (!baseQcow2.exists()) {
@@ -199,9 +186,8 @@ class VmManager(private val context: Context) {
                 .onFailure { Log.w(TAG, "Bootstrap asset $name not found") }
         }
 
-        // Mark extraction version so we skip on subsequent launches
-        File(filesDir, "assets_extracted.v1").createNewFile()
-        Log.d(TAG, "Assets extracted successfully to $filesDir")
+        File(filesDir, "assets_extracted.v2").createNewFile()
+        Log.d(TAG, "Assets extracted to $filesDir")
     }
 
     private fun extractAsset(assetPath: String, dest: File) {
@@ -221,20 +207,16 @@ class VmManager(private val context: Context) {
     }
 
     // -------------------------------------------------------------------------
-    // QCOW2 user image creation
+    // QCOW2 user image creation via qemu-img (from nativeLibraryDir)
     // -------------------------------------------------------------------------
 
     private fun createUserImage(userImagePath: String, baseImagePath: String) {
-        val qemuImg = File(qemuDir, "qemu-img")
+        val qemuImg = File(nativeLibDir, "libqemu_img.so")
         if (!qemuImg.exists()) {
-            // Without qemu-img we can't create a proper QCOW2 overlay; fail clearly
             throw IllegalStateException(
-                "qemu-img not found at ${qemuImg.absolutePath}. " +
-                "Ensure it is bundled in android/app/src/main/assets/qemu/qemu-img."
+                "libqemu_img.so not found in nativeLibraryDir: ${nativeLibDir.absolutePath}"
             )
         }
-
-        qemuImg.setExecutable(true, true)
 
         val proc = ProcessBuilder(
             qemuImg.absolutePath, "create",
@@ -244,7 +226,7 @@ class VmManager(private val context: Context) {
             userImagePath,
             "8G"
         ).apply {
-            environment()["LD_LIBRARY_PATH"] = qemuDir.absolutePath
+            environment()["LD_LIBRARY_PATH"] = nativeLibDir.absolutePath
         }.start()
 
         val exitCode = proc.waitFor()
@@ -252,7 +234,7 @@ class VmManager(private val context: Context) {
             val err = proc.errorStream.bufferedReader().readText()
             throw RuntimeException("qemu-img create failed (exit $exitCode): $err")
         }
-        Log.d(TAG, "Created user.qcow2 overlay at $userImagePath")
+        Log.d(TAG, "Created user.qcow2 at $userImagePath")
     }
 
     // -------------------------------------------------------------------------
@@ -281,32 +263,16 @@ class VmManager(private val context: Context) {
         cmd += listOf("-smp", vcpu.toString())
         cmd += listOf("-m", ramMb.toString())
 
-        // Read-only base image
         cmd += listOf("-drive", "if=none,file=$baseImage,id=base,format=qcow2,readonly=on")
-        // Writable user overlay
         cmd += listOf("-drive", "if=none,file=$userImage,id=user,format=qcow2")
         cmd += listOf("-device", "virtio-blk-pci,drive=user")
 
-        // User-mode networking with hostfwd for API port
         cmd += listOf("-netdev", "user,id=net0,hostfwd=tcp::7080-:7080")
         cmd += listOf("-device", "virtio-net-pci,netdev=net0")
 
-        // Inject auth token into guest via fw_cfg
-        // Guest reads: /sys/firmware/qemu_fw_cfg/by_name/opt/api_token/raw
         cmd += listOf("-fw_cfg", "name=opt/api_token,string=$token")
-
         cmd += listOf("-display", "none")
 
-        // ARM64 UEFI firmware — optional; skip if not bundled
-        if (isArm64()) {
-            val efi = File(qemuDir, "efi.fd")
-            if (efi.exists()) {
-                cmd += listOf("-bios", efi.absolutePath)
-            }
-        }
-
-        // Direct kernel boot (preferred — avoids UEFI dependency)
-        // Assets: vm/vmlinuz-virt and vm/initramfs-virt extracted from Alpine ISO
         val kernel = File(vmDir, "vmlinuz-virt")
         val initrd = File(vmDir, "initramfs-virt")
         if (kernel.exists() && initrd.exists()) {
@@ -325,15 +291,13 @@ class VmManager(private val context: Context) {
     private fun isArm64(): Boolean =
         Build.SUPPORTED_ABIS.any { it.startsWith("arm64") }
 
-    private fun qemuBinaryName(): String =
-        if (isArm64()) "qemu-system-aarch64" else "qemu-system-x86_64"
-
     private fun resolveQemuBinary(): File {
-        val bin = File(qemuDir, qemuBinaryName())
+        // QEMU is installed by Android's PackageManager into nativeLibraryDir as libqemu.so
+        val bin = File(nativeLibDir, "libqemu.so")
         if (!bin.exists()) {
             throw IllegalStateException(
-                "QEMU binary not found at ${bin.absolutePath}. " +
-                "Run scripts/extract_from_termux.sh or scripts/download_alpine.sh first."
+                "libqemu.so not found in nativeLibraryDir: ${nativeLibDir.absolutePath}. " +
+                "Ensure jniLibs/arm64-v8a/libqemu.so is present in the project."
             )
         }
         return bin
