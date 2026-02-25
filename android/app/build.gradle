@@ -57,6 +57,14 @@ android {
             signingConfig signingConfigs.debug
         }
     }
+
+    packagingOptions {
+        jniLibs {
+            // Force extraction of native libs to disk so ProcessBuilder can execute them.
+            // Without this, AGP 3.6+ keeps libs compressed inside the APK (not on disk).
+            useLegacyPackaging true
+        }
+    }
 }
 
 flutter {
