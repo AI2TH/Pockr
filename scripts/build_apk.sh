@@ -90,6 +90,9 @@ cp -r /src/android/app/src/main/kotlin     android/app/src/main/
 mkdir -p android/app/src/main/assets
 cp -r /src/android/app/src/main/assets/.  android/app/src/main/assets/
 
+# Signing keystore — ensures consistent APK signature across rebuilds
+[ -f /src/android/app/debug.keystore ] && cp /src/android/app/debug.keystore android/app/debug.keystore
+
 echo ''
 echo '--- Step 2b: Fix Gradle wrapper to 8.3 (required by AGP 8.1.0) ---'
 sed -i 's|distributionUrl=.*|distributionUrl=https\://services.gradle.org/distributions/gradle-8.3-all.zip|' \

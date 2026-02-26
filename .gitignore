@@ -1,7 +1,8 @@
 # Credentials and secrets only
 *.jks
 *.apk
-*.keystore
+# debug.keystore intentionally committed for consistent APK signing across builds
+release.keystore
 .env
 *.env.*
 *_credentials*
