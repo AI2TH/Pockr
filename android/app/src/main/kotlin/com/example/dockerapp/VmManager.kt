@@ -52,8 +52,9 @@ class VmManager(private val context: Context) {
         val qemuBin = resolveQemuBinary()
         Log.d(TAG, "QEMU binary: ${qemuBin.absolutePath}")
 
-        val vcpu = flutterPrefs.getInt("flutter.vcpu_count", 2)
-        val ramMb = flutterPrefs.getInt("flutter.ram_mb", 2048)
+        // Flutter SharedPreferences stores ints as Long on Android — handle both types
+        val vcpu = getFlutterInt("flutter.vcpu_count", 2)
+        val ramMb = getFlutterInt("flutter.ram_mb", 2048)
 
         val baseImage = File(vmDir, "base.qcow2")
         val userImage = File(vmDir, "user.qcow2")
@@ -140,6 +141,16 @@ class VmManager(private val context: Context) {
     // -------------------------------------------------------------------------
     // Token management
     // -------------------------------------------------------------------------
+
+    // Flutter SharedPreferences stores integers as Long on Android (not Int).
+    // Use this helper to safely read either type.
+    private fun getFlutterInt(key: String, default: Int): Int {
+        return try {
+            flutterPrefs.getInt(key, default)
+        } catch (_: ClassCastException) {
+            flutterPrefs.getLong(key, default.toLong()).toInt()
+        }
+    }
 
     private fun getOrCreateToken(): String {
         var t = appPrefs.getString("api_token", null)
