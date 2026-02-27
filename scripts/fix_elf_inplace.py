@@ -2,11 +2,22 @@
 """
 In-place ELF modification (no restructuring):
   1. Zero out DT_RUNPATH / DT_RPATH in .dynamic
+     OR repurpose DT_RUNPATH as DT_NEEDED (with --add-needed)
   2. Deversion NEEDED strings: libfoo.so.1 → libfoo.so (in .dynstr)
+
+Usage:
+  fix_elf_inplace.py [--add-needed LIBNAME] file1.so file2.so ...
+
+  --add-needed LIBNAME
+      Instead of zeroing DT_RUNPATH, repurpose it as DT_NEEDED for LIBNAME:
+      overwrite the RUNPATH string in .dynstr with LIBNAME and change d_tag
+      from DT_RUNPATH(29) → DT_NEEDED(1), keeping d_val (string offset) the same.
+      Only the first DT_RUNPATH entry is repurposed; any DT_RPATH is still cleared.
 """
 import struct, sys, re, os
 
-def fix_elf(path):
+
+def fix_elf(path, add_needed=None):
     with open(path, 'rb') as f:
         data = bytearray(f.read())
 
@@ -53,6 +64,7 @@ def fix_elf(path):
 
     DT_NULL, DT_NEEDED, DT_RPATH, DT_RUNPATH = 0, 1, 15, 29
     modified = False
+    already_converted = False   # track if we've repurposed one RUNPATH slot
 
     for i in range(dynamic_filesz // 16):
         eo = dynamic_offset + i * 16
@@ -63,38 +75,68 @@ def fix_elf(path):
             break
 
         if d_tag in (DT_RPATH, DT_RUNPATH):
-            # Read current RPATH string for logging
             rp_str = ""
             try:
                 rp_off = dynstr_offset + d_val
-                end = data.index(0, rp_off)
+                end    = data.index(0, rp_off)
                 rp_str = data[rp_off:end].decode('utf-8', errors='replace')
             except Exception:
                 pass
-            # Keep d_tag (do NOT set to DT_NULL=0, that breaks the .dynamic chain!)
-            # Just point d_val to offset 0 in .dynstr → empty RPATH string ""
-            struct.pack_into('<Q', data, eo + 8, 0)
+
             tag_name = 'RUNPATH' if d_tag == DT_RUNPATH else 'RPATH'
-            print(f"  Cleared DT_{tag_name}: {rp_str}")
-            modified = True
+
+            if add_needed is not None and d_tag == DT_RUNPATH and not already_converted:
+                # Repurpose this DT_RUNPATH entry as DT_NEEDED for add_needed.
+                rp_off    = dynstr_offset + d_val
+                end       = data.index(0, rp_off)
+                slot_size = end - rp_off + 1   # bytes available (including null)
+
+                new_bytes = add_needed.encode('utf-8') + b'\x00'
+                if len(new_bytes) > slot_size:
+                    print(f"  ERROR: '{add_needed}' ({len(new_bytes)} B) doesn't fit "
+                          f"in DT_RUNPATH slot ({slot_size} B) in {os.path.basename(path)}")
+                    sys.exit(1)
+
+                # Overwrite .dynstr slot with new lib name + zero padding
+                data[rp_off:rp_off + slot_size] = (
+                    new_bytes + b'\x00' * (slot_size - len(new_bytes))
+                )
+                # Change d_tag DT_RUNPATH(29) → DT_NEEDED(1); d_val stays the same
+                struct.pack_into('<q', data, eo, DT_NEEDED)
+                print(f"  DT_RUNPATH→DT_NEEDED: '{rp_str}' → '{add_needed}' "
+                      f"(slot {slot_size} B, name {len(new_bytes)} B)")
+                already_converted = True
+                modified = True
+            else:
+                # Keep d_tag (do NOT set to DT_NULL — that breaks the .dynamic chain!)
+                # Point d_val to offset 0 in .dynstr → empty string ""
+                struct.pack_into('<Q', data, eo + 8, 0)
+                print(f"  Cleared DT_{tag_name}: {rp_str}")
+                modified = True
 
         elif d_tag == DT_NEEDED:
             try:
                 str_off = dynstr_offset + d_val
-                end = data.index(0, str_off)
-                lib = data[str_off:end].decode('utf-8', errors='replace')
+                end     = data.index(0, str_off)
+                lib     = data[str_off:end].decode('utf-8', errors='replace')
             except Exception:
                 continue
 
             # Strip version suffix: libfoo.so.1 → libfoo.so
             new_lib = re.sub(r'(\.so)\.\d+(\.\d+)*$', r'\1', lib)
             if new_lib != lib:
-                orig_len = end - str_off + 1   # including null terminator
+                orig_len  = end - str_off + 1   # including null terminator
                 new_bytes = new_lib.encode('utf-8') + b'\x00'
-                assert len(new_bytes) <= orig_len, f"new name longer than original for {lib}"
-                data[str_off:str_off + orig_len] = new_bytes + b'\x00' * (orig_len - len(new_bytes))
+                assert len(new_bytes) <= orig_len, \
+                    f"new name longer than original for {lib}"
+                data[str_off:str_off + orig_len] = (
+                    new_bytes + b'\x00' * (orig_len - len(new_bytes))
+                )
                 print(f"  NEEDED: {lib} → {new_lib}")
                 modified = True
+
+    if add_needed is not None and not already_converted:
+        print(f"  WARNING: no DT_RUNPATH entry found to repurpose for '{add_needed}'")
 
     if modified:
         with open(path, 'wb') as f:
@@ -103,7 +145,18 @@ def fix_elf(path):
     else:
         print(f"  (no changes)")
 
+
 if __name__ == '__main__':
-    for p in sys.argv[1:]:
+    args = sys.argv[1:]
+    add_needed = None
+
+    if args and args[0] == '--add-needed':
+        if len(args) < 2:
+            print("ERROR: --add-needed requires a library name argument")
+            sys.exit(1)
+        add_needed = args[1]
+        args = args[2:]
+
+    for p in args:
         print(f"\n{os.path.basename(p)}")
-        fix_elf(p)
+        fix_elf(p, add_needed=add_needed)
