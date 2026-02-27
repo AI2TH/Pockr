@@ -19,7 +19,31 @@ class DockerApp extends StatelessWidget {
       child: MaterialApp(
         title: 'Docker VM',
         theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+          colorScheme: ColorScheme.dark(
+            primary: const Color(0xFF1D6FE5),
+            secondary: const Color(0xFF00C896),
+            surface: const Color(0xFF161F2E),
+            background: const Color(0xFF0B1120),
+          ),
+          scaffoldBackgroundColor: const Color(0xFF0B1120),
+          navigationBarTheme: NavigationBarThemeData(
+            backgroundColor: const Color(0xFF111827),
+            indicatorColor: const Color(0xFF1D6FE5).withOpacity(0.2),
+            labelTextStyle: WidgetStateProperty.all(
+              const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+            iconTheme: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.selected)) {
+                return const IconThemeData(color: Color(0xFF1D6FE5));
+              }
+              return IconThemeData(color: Colors.white.withOpacity(0.4));
+            }),
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Color(0xFF0B1120),
+            foregroundColor: Colors.white,
+            elevation: 0,
+          ),
           useMaterial3: true,
         ),
         home: const MainScreen(),

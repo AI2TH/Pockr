@@ -164,75 +164,146 @@ class _ContainersScreenState extends State<ContainersScreen> {
     final nameController = TextEditingController();
     final cmdController = TextEditingController(text: 'echo hello');
 
-    showDialog(
+    // Use a bottom sheet instead of AlertDialog to avoid keyboard overflow
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Start Container'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: imageController,
-              decoration: const InputDecoration(
-                labelText: 'Image',
-                hintText: 'e.g., busybox, alpine:3.19',
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Name (optional)',
-                hintText: 'Auto-generated if empty',
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: cmdController,
-              decoration: const InputDecoration(
-                labelText: 'Command',
-                hintText: 'e.g., echo hello',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF161F2E),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          ElevatedButton(
-            onPressed: () async {
-              final image = imageController.text.trim();
-              final name = nameController.text.trim().isEmpty
-                  ? 'container_${DateTime.now().millisecondsSinceEpoch}'
-                  : nameController.text.trim();
-              final cmd = cmdController.text.trim().split(' ');
-
-              Navigator.pop(context);
-
-              try {
-                await VmPlatform.startContainer(image, name, cmd);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Container started')),
-                  );
-                  _loadContainers();
-                }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Error: $e'),
-                      backgroundColor: Colors.red,
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Run Container',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _dialogField(imageController, 'Image', 'e.g., busybox, nginx:alpine'),
+              const SizedBox(height: 12),
+              _dialogField(nameController, 'Name (optional)', 'Auto-generated if empty'),
+              const SizedBox(height: 12),
+              _dialogField(cmdController, 'Command', 'e.g., echo hello'),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white60,
+                        side: BorderSide(color: Colors.white.withOpacity(0.15)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text('Cancel'),
                     ),
-                  );
-                }
-              }
-            },
-            child: const Text('Start'),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        final image = imageController.text.trim();
+                        final name = nameController.text.trim().isEmpty
+                            ? 'container_${DateTime.now().millisecondsSinceEpoch}'
+                            : nameController.text.trim();
+                        final cmd = cmdController.text.trim().split(' ')
+                            .where((s) => s.isNotEmpty)
+                            .toList();
+                        Navigator.pop(context);
+                        try {
+                          await VmPlatform.startContainer(image, name, cmd);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Started $image'),
+                                backgroundColor: const Color(0xFF00C896).withOpacity(0.9),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                            _loadContainers();
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Error: $e',
+                                    style: const TextStyle(fontSize: 12)),
+                                backgroundColor: const Color(0xFF2A1215),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          }
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1D6FE5),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text('Run',
+                          style: TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-        ],
+        ),
+      ),
+    );
+  }
+
+  Widget _dialogField(TextEditingController ctrl, String label, String hint) {
+    return TextField(
+      controller: ctrl,
+      style: const TextStyle(color: Colors.white, fontSize: 14),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13),
+        hintText: hint,
+        hintStyle: TextStyle(color: Colors.white.withOpacity(0.2), fontSize: 13),
+        filled: true,
+        fillColor: Colors.white.withOpacity(0.05),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: Color(0xFF1D6FE5)),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       ),
     );
   }
