@@ -26,10 +26,11 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 
-# ── Build the builder image if it doesn't exist ───────────────────────────────
+# ── Build the builder image if it doesn't exist (always amd64 for consistency) ─
 if ! docker image inspect "${IMAGE_NAME}" &>/dev/null; then
     echo "=== Building Docker build environment (first run — ~10 min) ==="
     docker build \
+        --platform linux/amd64 \
         -f "${PROJECT_ROOT}/docker/Dockerfile.build" \
         -t "${IMAGE_NAME}" \
         "${PROJECT_ROOT}"
@@ -90,6 +91,10 @@ cp -r /src/android/app/src/main/kotlin     android/app/src/main/
 mkdir -p android/app/src/main/assets
 cp -r /src/android/app/src/main/assets/.  android/app/src/main/assets/
 
+# Native libs (QEMU + all shared libs — arm64-v8a)
+mkdir -p android/app/src/main/jniLibs
+cp -r /src/android/app/src/main/jniLibs/. android/app/src/main/jniLibs/
+
 # Signing keystore — ensures consistent APK signature across rebuilds
 [ -f /src/android/app/debug.keystore ] && cp /src/android/app/debug.keystore android/app/debug.keystore
 
@@ -116,9 +121,10 @@ flutter build apk --${BUILD_TYPE} --verbose 2>&1 | tail -50
 echo ''
 echo '--- Step 5: Copy APK to output ---'
 APK_SRC=\"build/app/outputs/flutter-apk/app-${BUILD_TYPE}.apk\"
+APK_OUT=\"docker-vm-${BUILD_TYPE}.apk\"
 if [ -f \"\$APK_SRC\" ]; then
-    cp \"\$APK_SRC\" /out/app-${BUILD_TYPE}.apk
-    echo \"APK size: \$(du -sh /out/app-${BUILD_TYPE}.apk | cut -f1)\"
+    cp \"\$APK_SRC\" /out/\$APK_OUT
+    echo \"APK size: \$(du -sh /out/\$APK_OUT | cut -f1)\"
 else
     echo 'ERROR: APK not found at \$APK_SRC'
     ls -la build/app/outputs/flutter-apk/ 2>/dev/null || true
@@ -127,7 +133,7 @@ fi
 "
 
 echo ""
-echo "✅  Build complete: ${OUTPUT_DIR}/app-${BUILD_TYPE}.apk"
+echo "✅  Build complete: ${OUTPUT_DIR}/docker-vm-${BUILD_TYPE}.apk"
 echo ""
 echo "Install on connected device:"
-echo "  adb install ${OUTPUT_DIR}/app-${BUILD_TYPE}.apk"
+echo "  adb install ${OUTPUT_DIR}/docker-vm-${BUILD_TYPE}.apk"
