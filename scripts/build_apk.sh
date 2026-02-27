@@ -57,6 +57,7 @@ docker run --rm \
     "${IMAGE_NAME}" \
     bash -c "
 set -e
+git config --global --add safe.directory /opt/flutter 2>/dev/null || true
 
 echo '--- Step 1: Scaffold fresh Flutter project ---'
 flutter create \
@@ -96,19 +97,16 @@ mkdir -p android/app/src/main/jniLibs
 cp -r /src/android/app/src/main/jniLibs/. android/app/src/main/jniLibs/
 
 # Signing keystore — ensures consistent APK signature across rebuilds
-[ -f /src/android/app/debug.keystore ] && cp /src/android/app/debug.keystore android/app/debug.keystore
+[ -f /src/android/app/debug.keystore ] && cp /src/android/app/debug.keystore android/app/debug.keystore || true
 
 echo ''
 echo '--- Step 2b: Fix Gradle wrapper to 8.3 (required by AGP 8.1.0) ---'
 sed -i 's|distributionUrl=.*|distributionUrl=https\://services.gradle.org/distributions/gradle-8.3-all.zip|' \
     android/gradle/wrapper/gradle-wrapper.properties
-echo "Gradle: $(grep distributionUrl android/gradle/wrapper/gradle-wrapper.properties)"
+echo \"Gradle: \$(grep distributionUrl android/gradle/wrapper/gradle-wrapper.properties)\"
 
 # Write local.properties so settings.gradle can locate flutter.sdk
-cat > android/local.properties << 'LOCALEOF'
-flutter.sdk=/opt/flutter
-sdk.dir=/opt/android-sdk
-LOCALEOF
+printf 'flutter.sdk=/opt/flutter\nsdk.dir=/opt/android-sdk\n' > android/local.properties
 
 echo ''
 echo '--- Step 3: flutter pub get ---'
