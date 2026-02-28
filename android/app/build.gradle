@@ -41,7 +41,8 @@ android {
 
     aaptOptions {
         // Prevent aapt2 from decompressing .gz assets — we handle decompression at runtime
-        noCompress "gz"
+        // Also skip compression on kernel/initrd (already compressed binaries)
+        noCompress "gz", "virt"
     }
 
     defaultConfig {

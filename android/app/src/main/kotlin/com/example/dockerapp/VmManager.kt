@@ -172,6 +172,8 @@ class VmManager(private val context: Context) {
         return marker.exists()
             && resolveQemuBinary().exists()
             && File(vmDir, "base.qcow2").exists()
+            && File(vmDir, "vmlinuz-virt").exists()
+            && File(vmDir, "initramfs-virt").exists()
     }
 
     private fun extractAssets() {
@@ -188,6 +190,15 @@ class VmManager(private val context: Context) {
             } catch (_: Exception) {
                 extractAndDecompress("vm/base.qcow2.gz", baseQcow2)
                 Log.d(TAG, "Extracted + decompressed base.qcow2.gz")
+            }
+        }
+
+        // Kernel and initrd
+        listOf("vmlinuz-virt", "initramfs-virt").forEach { name ->
+            val dest = File(vmDir, name)
+            if (!dest.exists()) {
+                extractAsset("vm/$name", dest)
+                Log.d(TAG, "Extracted $name")
             }
         }
 
@@ -279,7 +290,7 @@ class VmManager(private val context: Context) {
         cmd += listOf("-device", "virtio-blk-pci,drive=user")
 
         cmd += listOf("-netdev", "user,id=net0,hostfwd=tcp::7080-:7080")
-        cmd += listOf("-device", "virtio-net-pci,netdev=net0")
+        cmd += listOf("-device", "virtio-net-pci,netdev=net0,romfile=")
 
         cmd += listOf("-fw_cfg", "name=opt/api_token,string=$token")
         cmd += listOf("-display", "none")
