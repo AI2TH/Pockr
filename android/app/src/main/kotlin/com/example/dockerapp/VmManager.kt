@@ -96,7 +96,15 @@ class VmManager(private val context: Context) {
 
     fun stopVm() {
         Log.d(TAG, "Stopping VM...")
-        vmProcess?.destroy()
+        vmProcess?.let { proc ->
+            proc.destroy()  // SIGTERM
+            // Wait up to 5 s for graceful exit, then force-kill to release file locks
+            if (!proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                Log.w(TAG, "QEMU did not exit in 5s, force-killing")
+                proc.destroyForcibly()
+                proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+            }
+        }
         vmProcess = null
         isRunning = false
         Log.d(TAG, "VM stopped")
@@ -294,6 +302,7 @@ class VmManager(private val context: Context) {
 
         cmd += listOf("-fw_cfg", "name=opt/api_token,string=$token")
         cmd += listOf("-display", "none")
+        cmd += listOf("-serial", "stdio")  // route ttyAMA0 → Java stdout → logcat
 
         val kernel = File(vmDir, "vmlinuz-virt")
         val initrd = File(vmDir, "initramfs-virt")
