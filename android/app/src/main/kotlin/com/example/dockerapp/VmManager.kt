@@ -309,7 +309,12 @@ class VmManager(private val context: Context) {
         if (kernel.exists() && initrd.exists()) {
             cmd += listOf("-kernel", kernel.absolutePath)
             cmd += listOf("-initrd", initrd.absolutePath)
-            cmd += listOf("-append", "console=ttyAMA0 root=/dev/vda rw quiet")
+            // Alpine live initramfs only loads modules listed in KOPT_modules/rootfstype.
+            // Pass them explicitly so virtio_blk and ext4 are loaded before mount.
+            // "rw" is ignored by Alpine's init; rootflags=rw is the correct form.
+            cmd += listOf("-append",
+                "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rootflags=rw " +
+                "modules=virtio_blk,ext4 quiet")
         }
 
         return cmd
