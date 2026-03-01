@@ -176,7 +176,7 @@ class VmManager(private val context: Context) {
     // -------------------------------------------------------------------------
 
     private fun assetsReady(): Boolean {
-        val marker = File(filesDir, "assets_extracted.v2")
+        val marker = File(filesDir, "assets_extracted.v5")
         return marker.exists()
             && resolveQemuBinary().exists()
             && File(vmDir, "base.qcow2").exists()
@@ -216,7 +216,7 @@ class VmManager(private val context: Context) {
                 .onFailure { Log.w(TAG, "Bootstrap asset $name not found") }
         }
 
-        File(filesDir, "assets_extracted.v2").createNewFile()
+        File(filesDir, "assets_extracted.v5").createNewFile()
         Log.d(TAG, "Assets extracted to $filesDir")
     }
 
@@ -312,9 +312,11 @@ class VmManager(private val context: Context) {
             // Alpine live initramfs only loads modules listed in KOPT_modules/rootfstype.
             // Pass them explicitly so virtio_blk and ext4 are loaded before mount.
             // "rw" is ignored by Alpine's init; rootflags=rw is the correct form.
+            // api_token passed here so init_bootstrap.sh can read it from /proc/cmdline
+            // without needing the qemu_fw_cfg kernel module.
             cmd += listOf("-append",
                 "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rootflags=rw " +
-                "modules=virtio_blk,ext4 quiet")
+                "modules=virtio_blk,ext4 api_token=$token quiet")
         }
 
         return cmd

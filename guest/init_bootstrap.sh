@@ -1,122 +1,90 @@
 #!/bin/sh
-# Bootstrap script for Alpine Linux first boot inside the QEMU VM.
-# Installs Docker, reads the API token from fw_cfg, and starts the API server.
-# This file is placed at /bootstrap/init_bootstrap.sh inside the guest.
-
-set -e
+# Bootstrap: runs on first boot inside the QEMU VM.
+# Docker and Python are pre-installed in the base image.
+# This script reads the API token, waits for Docker, then starts the API server.
 
 echo "=== Docker VM Bootstrap Starting ==="
 
 # ---------------------------------------------------------------------------
-# Read API token from QEMU fw_cfg
-# The Android app injects it via: -fw_cfg name=opt/api_token,string=<TOKEN>
+# Read API token from kernel cmdline.
+# Android app injects it via: -append "... api_token=<UUID>"
+# Readable from: /proc/cmdline
 # ---------------------------------------------------------------------------
-FW_CFG_TOKEN="/sys/firmware/qemu_fw_cfg/by_name/opt/api_token/raw"
 TOKEN_FILE="/bootstrap/token"
 
-if [ -f "$FW_CFG_TOKEN" ]; then
-    TOKEN=$(cat "$FW_CFG_TOKEN")
-    echo "API token loaded from fw_cfg"
-else
-    echo "WARNING: fw_cfg token not found at $FW_CFG_TOKEN"
-    # Fallback: use env var (useful for testing outside of QEMU)
-    TOKEN="${API_TOKEN:-}"
-fi
-
-if [ -z "$TOKEN" ]; then
-    echo "ERROR: No API token available. The server will reject all requests."
-else
-    # Write token to file so api_server.py can also find it
+TOKEN=$(tr ' ' '\n' < /proc/cmdline | grep '^api_token=' | cut -d= -f2-)
+if [ -n "$TOKEN" ]; then
     echo -n "$TOKEN" > "$TOKEN_FILE"
-    echo "Token written to $TOKEN_FILE"
+    echo "Token loaded from kernel cmdline"
+else
+    echo "WARNING: api_token not found in kernel cmdline"
+    # Fallback: reuse token from previous boot if present
+    if [ -f "$TOKEN_FILE" ]; then
+        TOKEN=$(cat "$TOKEN_FILE")
+        echo "Using persisted token from $TOKEN_FILE"
+    fi
 fi
 
-# ---------------------------------------------------------------------------
-# Package setup
-# ---------------------------------------------------------------------------
-echo "Updating package index..."
-apk update
-
-echo "Installing Docker..."
-apk add docker docker-cli
-
-echo "Installing Python and pip..."
-apk add python3 py3-pip
+export API_TOKEN="$TOKEN"
 
 # ---------------------------------------------------------------------------
-# Docker service
+# Wait for Docker daemon (started by OpenRC docker service)
 # ---------------------------------------------------------------------------
-echo "Enabling Docker service..."
-rc-update add docker default
-service docker start
+echo "Waiting for Docker daemon..."
+# Print Docker log after 3s to diagnose startup issues
+sleep 3
+echo "=== dockerd log (first 3s) ==="
+cat /var/log/docker.log 2>/dev/null || echo "(no log yet)"
+echo "=== end dockerd log ==="
+echo "=== /var/run/ ==="
+ls /var/run/ 2>/dev/null
+echo "======================"
 
-echo "Waiting for Docker to be ready..."
-timeout=60
+timeout=117
 while [ $timeout -gt 0 ]; do
     if docker info >/dev/null 2>&1; then
-        echo "Docker is ready"
+        echo "Docker is ready (waited $((120 - timeout))s)"
         break
+    fi
+    # Print Docker log update every 30s
+    if [ $((timeout % 30)) -eq 0 ]; then
+        echo "--- dockerd log (t=$((120 - timeout))s) ---"
+        tail -10 /var/log/docker.log 2>/dev/null || true
+        ls -la /var/run/docker.sock 2>/dev/null || echo "(no socket)"
     fi
     sleep 1
     timeout=$((timeout - 1))
 done
 
 if [ $timeout -eq 0 ]; then
-    echo "ERROR: Docker failed to start within 60s"
+    echo "ERROR: Docker did not become ready in 120s"
+    echo "=== final dockerd log ==="
+    cat /var/log/docker.log 2>/dev/null | tail -40 || true
+    echo "=== docker info ==="
+    docker info 2>&1 || true
     exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# API server dependencies
-# ---------------------------------------------------------------------------
-echo "Installing API server dependencies..."
-if [ -f /bootstrap/requirements.txt ]; then
-    pip3 install --no-cache-dir -r /bootstrap/requirements.txt
-else
-    pip3 install --no-cache-dir fastapi==0.109.0 uvicorn==0.27.0 pydantic==2.5.3
-fi
+echo "Docker: $(docker --version)"
 
 # ---------------------------------------------------------------------------
-# OpenRC service for API server
+# Start API server
 # ---------------------------------------------------------------------------
-echo "Creating API server OpenRC service..."
-cat > /etc/init.d/docker-api <<'RCEOF'
-#!/sbin/openrc-run
-
-name="Docker API Server"
-description="FastAPI server for Docker container management"
-command="/usr/bin/python3"
-command_args="/bootstrap/api_server.py"
-command_background=true
-pidfile="/run/docker-api.pid"
-output_log="/var/log/docker-api.log"
-error_log="/var/log/docker-api.log"
-
-depend() {
-    need docker
-    after docker
-}
-
-start_pre() {
-    checkpath --directory --mode 0755 /var/log
-}
-RCEOF
-
-chmod +x /etc/init.d/docker-api
-rc-update add docker-api default
-
-# Export the token so the api_server subprocess picks it up via os.environ
-export API_TOKEN="$TOKEN"
-service docker-api start
+echo "Starting API server on 127.0.0.1:7080..."
+mkdir -p /var/log
+API_TOKEN="$TOKEN" nohup /usr/bin/python3 /bootstrap/api_server.py \
+    > /var/log/docker-api.log 2>&1 &
+echo $! > /var/run/docker-api.pid
+echo "API server PID: $!"
 
 # ---------------------------------------------------------------------------
-# Health check
+# Wait for API server to respond
 # ---------------------------------------------------------------------------
-echo "Waiting for API server to respond..."
+echo "Waiting for API server..."
 timeout=30
 while [ $timeout -gt 0 ]; do
     if wget -q -O- http://127.0.0.1:7080/health >/dev/null 2>&1; then
-        echo "API server is ready"
+        echo "API server is ready at http://127.0.0.1:7080"
         break
     fi
     sleep 1
@@ -124,9 +92,8 @@ while [ $timeout -gt 0 ]; do
 done
 
 if [ $timeout -eq 0 ]; then
-    echo "WARNING: API server health check timed out — check /var/log/docker-api.log"
+    echo "WARNING: API server health check timed out"
+    cat /var/log/docker-api.log 2>/dev/null | tail -20 || true
 fi
 
 echo "=== Bootstrap Complete ==="
-echo "Docker: $(docker --version)"
-echo "API:    http://127.0.0.1:7080 (hostfwd → Android localhost:7080)"

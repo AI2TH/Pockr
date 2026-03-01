@@ -98,13 +98,13 @@ echo "Starting robo test on ${DEVICE} (Android ${ANDROID_VERSION})..."
 echo "Results will appear at: https://console.firebase.google.com/project/${GCP_PROJECT}/testlab"
 echo ""
 
+gcloud config set core/http_timeout 600 --quiet
+
 gcloud firebase test android run \
   --app=/app.apk \
   --device "model=${DEVICE},version=${ANDROID_VERSION},locale=en,orientation=portrait" \
-  --timeout 300s \
-  --type robo \
-  --robo-directives "click:Start VM=" \
-  --format json 2>&1 | tee /tmp/test_result.json || true
+  --timeout 600s \
+  --type robo
 
 echo ""
 echo "=== Test Complete ==="
