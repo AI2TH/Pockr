@@ -2,7 +2,7 @@
 
 Run Docker containers on a non-rooted Android device — no Termux, no root, one APK.
 
-The app embeds a QEMU virtual machine running Alpine Linux. Docker runs inside the VM. A FastAPI server inside the VM exposes a REST API over localhost, which the Flutter UI calls to manage containers.
+The app embeds QEMU running Alpine Linux. Docker runs inside the VM. A FastAPI server inside the VM exposes a REST API over localhost, which the Flutter UI calls to manage containers.
 
 ---
 
@@ -10,25 +10,26 @@ The app embeds a QEMU virtual machine running Alpine Linux. Docker runs inside t
 
 ```
 Android App (Flutter + Kotlin)
-  └── VmManager  ──launches──▶  QEMU (qemu-system-aarch64)
+  └── VmManager  ──launches──▶  QEMU (libqemu.so from nativeLibraryDir)
                                   └── Alpine Linux VM
                                         └── Docker daemon
                                         └── API server (FastAPI :7080)
-  └── VmApiClient ──HTTP──▶  http://127.0.0.1:7080  (hostfwd)
+  └── VmApiClient ──HTTP──▶  http://127.0.0.1:7080  (QEMU hostfwd)
 ```
 
-- **No root required** — QEMU user-mode networking (slirp) works as a regular app
-- **No Termux** — QEMU binaries and Alpine image are bundled inside the APK
-- **Token auth** — UUID token injected into the VM via QEMU `fw_cfg`, validated on every API call
+- **No root required** — QEMU user-mode networking (SLIRP) works as a regular app
+- **No Termux** — QEMU binaries ship as `jniLibs` inside the APK; Alpine image is a bundled asset
+- **Token auth** — UUID token injected into the VM via QEMU kernel cmdline `api_token=<UUID>`; guest reads it from `/proc/cmdline`
 
 ---
 
 ## Features
 
-- Start / stop the embedded Linux VM from the app
-- Pull Docker images and run containers
+- Start / stop the embedded Linux VM
+- Pull Docker images and run containers (image is cached across VM restarts)
 - View real-time container logs
-- Start/stop containers from the UI
+- Start / stop containers from the UI
+- **Terminal** — shell access directly into the Alpine VM host
 - Configurable vCPU count and RAM (1–4 cores, 512 MB–4 GB)
 - Persistent notification while VM is running (ForegroundService)
 
@@ -41,54 +42,55 @@ Android App (Flutter + Kotlin)
 
 ### Device
 - Android 8.0+ (API 26+)
-- ARM64 (aarch64) device
-- ~1 GB free storage (APK ~465 MB including QEMU + Alpine image)
-- ~2–3 GB free RAM recommended while VM is running
+- ARM64 (aarch64) — only arm64-v8a QEMU binaries are included
+- ~250 MB free storage for the APK
+- ~2–3 GB free RAM while VM is running
 
 ---
 
 ## Project structure
 
 ```
-docker-on-android/
+docker-app/
 ├── lib/                        Flutter UI (Dart)
-│   ├── main.dart
+│   ├── main.dart               4 tabs: Dashboard, Containers, Terminal, Settings
 │   ├── screens/
 │   │   ├── dashboard.dart      VM status, start/stop
 │   │   ├── containers.dart     Container list, logs
+│   │   ├── terminal.dart       VM shell terminal
 │   │   └── settings.dart       vCPU / RAM sliders
 │   └── services/
-│       └── vm_platform.dart    MethodChannel + VmState
+│       └── vm_platform.dart    MethodChannel + VmState (health polling)
 │
 ├── android/                    Android native (Kotlin)
 │   └── app/src/main/
 │       ├── kotlin/com/example/dockerapp/
+│       │   ├── DockerApp.kt        Application singleton (holds VmManager)
 │       │   ├── MainActivity.kt     MethodChannel handler
 │       │   ├── VmManager.kt        Asset extraction + QEMU launch
 │       │   ├── VmApiClient.kt      HTTP client (auth token)
 │       │   └── VmService.kt        ForegroundService
+│       ├── jniLibs/arm64-v8a/  QEMU + ~50 shared libs (committed to git)
+│       │   ├── libqemu.so          qemu-system-aarch64
+│       │   ├── libqemu_img.so      qemu-img
+│       │   └── lib*.so (×48)       shared dependencies (glib, zlib, etc.)
 │       └── assets/
-│           ├── qemu/               qemu-system-aarch64, qemu-img
-│           ├── vm/                 base.qcow2.gz (Alpine Linux)
-│           └── bootstrap/          api_server.py, init_bootstrap.sh
+│           ├── vm/                 base.qcow2.gz, vmlinuz-virt, initramfs-virt
+│           └── bootstrap/          api_server.py, init_bootstrap.sh, requirements.txt
 │
-├── guest/                      Files that run inside the VM
-│   ├── api_server.py           FastAPI server (Docker management)
-│   ├── init_bootstrap.sh       First-boot setup (installs Docker)
+├── guest/                      Source files baked into the Alpine base image
+│   ├── api_server.py           FastAPI server (Docker + VM shell management)
+│   ├── init_bootstrap.sh       First-boot setup script
 │   └── requirements.txt
 │
 ├── docker/
-│   └── Dockerfile.build        Ubuntu → JDK 17 → Android SDK → Flutter
+│   └── Dockerfile.build        Ubuntu → JDK 17 → Android SDK → Flutter 3.22.2
 │
 └── scripts/
-    ├── build_apk.sh            Build APK inside Docker
-    ├── build_qemu.sh           Build QEMU for Android ARM64 inside Docker
-    ├── download_alpine.sh      Download + convert Alpine ISO inside Docker
-    ├── copy_bootstrap.sh       Sync guest/ scripts into assets/
-    ├── verify_assets.sh        Validate all assets before building
-    ├── generate_checksums.sh   SHA-256 checksums for assets
-    ├── test_api.sh             Test guest API server with Docker-in-Docker
-    └── setup_assets.sh         Interactive menu for all of the above
+    ├── build_apk.sh            Build APK inside Docker  ← primary build script
+    ├── build_alpine_base.sh    Build Alpine base image with Docker + Python baked in
+    ├── alpine_build_inner.sh   Inner image build logic (runs inside Alpine container)
+    └── firebase_test.sh        Run Robo test on Firebase Test Lab
 ```
 
 ---
@@ -98,44 +100,29 @@ docker-on-android/
 ### 1. Clone
 
 ```bash
-git clone https://github.com/ai2th/docker-on-android.git
-cd docker-on-android
+git clone <repo-url>
+cd docker-app
 ```
 
-### 2. Acquire assets
+### 2. Build the Alpine base image
 
-All steps run inside Docker — no other tools needed on the host.
+The base image bundles Alpine Linux with Docker, Python, and the API server pre-installed. This step takes ~10–15 minutes and only needs to be rerun when `guest/` files change.
 
 ```bash
-# Interactive menu
-./scripts/setup_assets.sh
+./scripts/build_alpine_base.sh
+# Output: android/app/src/main/assets/vm/base.qcow2.gz (~102 MB)
 ```
 
-Or run individually:
+The QEMU binaries and kernel/initrd are already committed in `jniLibs/` and `assets/vm/` — no separate acquisition step is needed.
 
-```bash
-# Bootstrap scripts (guest/ → assets/bootstrap/)
-./scripts/copy_bootstrap.sh
-
-# Alpine Linux image (~50 MB download, converts to QCOW2 inside Docker)
-./scripts/download_alpine.sh
-
-# QEMU binaries — choose one:
-./scripts/extract_from_termux.sh   # fast: pull from Termux .deb packages
-./scripts/build_qemu.sh            # from source inside Docker (~20 min)
-
-# Verify everything is in place
-./scripts/verify_assets.sh
-```
-
-### 3. Build APK
+### 3. Build the APK
 
 ```bash
 ./scripts/build_apk.sh
-# Output: build/docker-vm-debug.apk (~465 MB)
+# Output: build/docker-vm-debug.apk (~220 MB)
 ```
 
-First build takes ~25 minutes (downloads JDK + Android SDK + Flutter inside Ubuntu). Subsequent builds reuse cached Docker layers.
+First build takes ~10 minutes (downloads JDK + Android SDK + Flutter inside Ubuntu Docker image). Subsequent builds reuse the cached builder image.
 
 ### 4. Install
 
@@ -143,72 +130,17 @@ First build takes ~25 minutes (downloads JDK + Android SDK + Flutter inside Ubun
 adb install -r build/docker-vm-debug.apk
 ```
 
-Or transfer the APK manually and install it on the device.
-
 ---
 
 ## First run
 
 1. Open the app → tap **Start VM**
-2. Assets are extracted to app-private storage on first launch (~30 seconds)
-3. QEMU boots Alpine Linux (~2–3 minutes)
-4. `init_bootstrap.sh` runs inside the VM — installs Docker and starts the API server (~5–10 minutes on very first boot)
-5. Once the API health check passes, the dashboard shows **RUNNING** and containers can be managed
+2. Assets extract to app-private storage on first launch (~10–30 seconds)
+3. QEMU boots Alpine Linux (~30–60 seconds)
+4. `init_bootstrap.sh` runs on the very first boot — installs Docker and starts the API server (~5–10 minutes)
+5. Once the `/health` check passes, the dashboard shows **RUNNING** and containers can be managed
 
-> First boot is slow because Docker is installed from Alpine packages inside the VM. Subsequent boots take ~30–60 seconds.
-
----
-
-## Docker Hub
-
-Pre-built images are published to Docker Hub under `ai2th`:
-
-| Image | Description |
-|---|---|
-| `ai2th/ubuntu:22.04` | Ubuntu base used for APK builds |
-| `ai2th/qemu-android:8.2.0` | QEMU 8.2.0 binaries built for Android ARM64 |
-
-Pull QEMU binaries from Docker Hub instead of building from source:
-
-```bash
-docker run --rm \
-  -v "$(pwd)/android/app/src/main/assets/qemu:/out" \
-  ai2th/qemu-android:8.2.0 \
-  bash -c 'cp /qemu-android/* /out/'
-```
-
----
-
-## Architecture notes
-
-### Why a VM?
-
-Stock Android kernels disable `CONFIG_USER_NS` (required for Docker rootless mode) and restrict cgroup access for regular apps. A QEMU VM provides a complete Linux environment with its own kernel — Docker runs normally inside it.
-
-Reference: [android.googlesource.com/kernel/common — gki_defconfig](https://android.googlesource.com/kernel/common/+/refs/heads/android-mainline/arch/arm64/configs/gki_defconfig)
-
-### Networking
-
-QEMU uses slirp user-mode networking (no root required):
-
-- `hostfwd=tcp::7080-:7080` exposes the guest API server to Android localhost
-- Guest is not directly reachable from outside — only via hostfwd ports
-- ICMP/ping does not work inside the guest (slirp limitation)
-- Performance is lower than tap/bridge networking
-
-### Token auth
-
-A UUID token is generated on first app launch and stored in `vm_app_prefs`. It is injected into the VM via:
-
-```
-qemu-system-aarch64 ... -fw_cfg name=opt/api_token,string=<TOKEN>
-```
-
-The guest reads it from `/sys/firmware/qemu_fw_cfg/by_name/opt/api_token/raw`. Every API request must include `Authorization: Bearer <token>`.
-
-### Settings
-
-vCPU count and RAM are stored in Flutter `SharedPreferences` (`FlutterSharedPreferences`, keys `flutter.vcpu_count` and `flutter.ram_mb`). `VmManager.kt` reads them before launching QEMU.
+> **First boot only** is slow because Docker is installed from Alpine packages inside the VM. Subsequent boots take 30–60 seconds, and previously pulled Docker images are available instantly (persistent `user.qcow2` overlay).
 
 ---
 
@@ -219,34 +151,85 @@ All endpoints except `/health` require `Authorization: Bearer <token>`.
 | Method | Path | Body / Query | Description |
 |---|---|---|---|
 | GET | `/health` | — | `{"status","runtime","version"}` |
-| GET | `/containers` | — | List running containers |
-| POST | `/containers/start` | `{"image","name","cmd","env","ports"}` | Run a container |
+| GET | `/containers` | — | List all containers |
+| POST | `/containers/start` | `{"image","name","cmd","env","ports","network"}` | Pull image then run container |
 | POST | `/containers/stop` | `{"name"}` | Stop a container |
 | GET | `/logs` | `?name=&tail=` | Container logs |
-| POST | `/images/pull` | `{"image"}` | Pull an image |
-| POST | `/exec` | `{"name","cmd"}` | Exec in a container |
+| POST | `/images/pull` | `{"image"}` | Pull an image (300s timeout) |
+| POST | `/exec` | `{"name","cmd"}` | Exec command in a container |
+| POST | `/vm/exec` | `{"cmd"}` | Run shell command on VM host |
+
+### Timeout contract
+
+`/containers/start` runs `docker pull` (up to 300 s) then `docker run` (up to 30 s). The Android `VmApiClient` uses a 360 s read timeout to cover both steps.
 
 ---
 
-## Testing the API
+## Architecture notes
 
-Test the guest API server end-to-end using Docker-in-Docker (no Android device needed):
+### Why a VM?
 
-```bash
-./scripts/test_api.sh
+Stock Android kernels disable `CONFIG_USER_NS` (required for Docker rootless mode) and restrict cgroup access for regular apps. A QEMU VM provides a complete Linux environment with its own kernel — Docker runs normally inside it.
+
+### Networking
+
+QEMU uses SLIRP user-mode networking (no root required):
+
+- `hostfwd=tcp::7080-:7080` — Android port 7080 → guest `10.0.2.15:7080`
+- Guest API server **must** listen on `0.0.0.0:7080` (not `127.0.0.1`) so SLIRP-forwarded connections reach it
+- Android cleartext HTTP allowed for `127.0.0.1` via `res/xml/network_security_config.xml`
+- ICMP/ping does not work inside the guest (SLIRP limitation)
+
+### Token auth
+
+A UUID token is generated on first app launch (`vm_app_prefs`) and injected into every QEMU boot via:
+
+```
+-append "... api_token=<TOKEN> ..."
 ```
 
-Starts a real Docker daemon inside a container, starts the API server, runs HTTP tests against all endpoints, and reports PASS/FAIL.
+The guest reads it from `/proc/cmdline`. Every API request must include `Authorization: Bearer <token>`.
+
+### Docker daemon constraints
+
+Alpine's kernel (`linux-virt`) ships without `nf_tables`, `bridge`, or `overlay` modules. The Docker daemon is configured accordingly:
+
+```json
+{
+  "iptables": false,
+  "bridge": "none",
+  "dns": ["8.8.8.8", "8.8.4.4"]
+}
+```
+
+Containers use `--network host` to share the VM's SLIRP network interface.
+
+### DNS
+
+`/etc/resolv.conf` in the VM lists three nameservers with `options use-vc` (force TCP) to work around SLIRP UDP unreliability:
+
+```
+nameserver 10.0.2.3
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+options timeout:2 attempts:2 use-vc
+```
+
+### Persistent Docker image cache
+
+`user.qcow2` is a QCOW2 overlay backed by `base.qcow2`. It persists across VM restarts so pulled Docker images are available on the next boot without re-downloading. The overlay is only recreated when `base.qcow2` is freshly extracted (i.e., on first install or app update).
 
 ---
 
-## Docs
+## Firebase Test Lab
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — primary design document
-- [`ARCHITECTURE2.md`](ARCHITECTURE2.md) — companion reference
-- [`ARC_START.md`](ARC_START.md) — phased MVP plan
-- [`ASSET_GUIDE.md`](ASSET_GUIDE.md) — asset acquisition guide
-- [`scripts/README.md`](scripts/README.md) — script reference
+Automated Robo tests run on `Pixel2.arm` (ARM64), Android 11 (API 30):
+
+```bash
+./scripts/firebase_test.sh docker-28f14 Pixel2.arm 30
+```
+
+Requires `service-account-key.json` in the project root (gitignored).
 
 ---
 
@@ -260,8 +243,6 @@ Starts a real Docker daemon inside a container, starts the API server, runs HTTP
 | Flutter | BSD 3-Clause |
 
 QEMU source or written offer is available per GPLv2 §3. Third-party notices are accessible in the app under **Settings → About**.
-
-References: [wiki.qemu.org/License](https://wiki.qemu.org/License)
 
 ---
 

@@ -88,6 +88,9 @@ cp /src/android/gradle.properties          android/gradle.properties
 rm -rf android/app/src/main/kotlin/
 cp -r /src/android/app/src/main/kotlin     android/app/src/main/
 
+# Android resources (network_security_config.xml, etc.) — merge into scaffold res/
+cp -r /src/android/app/src/main/res/.  android/app/src/main/res/
+
 # Assets (bootstrap scripts; qemu/ and vm/ dirs contain placeholders only)
 mkdir -p android/app/src/main/assets
 cp -r /src/android/app/src/main/assets/.  android/app/src/main/assets/

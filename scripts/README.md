@@ -1,127 +1,113 @@
-# Asset & Build Scripts
+# Scripts
 
 > **Rule: Docker only.** Every download, build, and test runs inside a Docker container.
 > The only tool required on the host is **Docker Desktop**.
 
 ---
 
-## Scripts
+## Active scripts
 
-| Script | What it does | Docker image used |
+| Script | What it does | When to run |
 |---|---|---|
-| `setup_assets.sh` | Interactive menu — entry point for everything | delegates |
-| `copy_bootstrap.sh` | Copies `guest/` scripts into Android assets | `alpine:3.19` |
-| `download_alpine.sh` | Downloads Alpine ISO, converts to `base.qcow2.gz` | `debian:bookworm-slim` |
-| `extract_from_termux.sh` | Extracts QEMU binaries from Termux `.deb` packages | `debian:bookworm-slim` |
-| `build_qemu.sh` | Cross-compiles QEMU for Android ARM64 from source | `debian:bookworm` |
-| `generate_checksums.sh` | SHA-256 checksums for all assets | `alpine:3.19` |
-| `verify_assets.sh` | Validates all assets before APK build | `debian:bookworm-slim` |
-| `test_api.sh` | Tests the guest API server end-to-end | `docker:dind` + `alpine:3.19` |
+| `build_apk.sh` | Builds the Flutter Android APK inside an Ubuntu/JDK/Flutter Docker container | Every code change |
+| `build_alpine_base.sh` | Builds the Alpine base QCOW2 image (Docker + Python pre-installed) | When `guest/` files change |
+| `alpine_build_inner.sh` | Inner build logic invoked by `build_alpine_base.sh` inside the Alpine container | Called automatically — do not run directly |
+| `firebase_test.sh` | Submits APK to Firebase Test Lab for Robo test on Pixel2.arm (Android 11) | After each APK build |
 
 ---
 
-## Quick start
+## `build_apk.sh`
 
 ```bash
-# Interactive menu — start here
-./scripts/setup_assets.sh
+./scripts/build_apk.sh          # debug build (default)
+./scripts/build_apk.sh release  # release build
 ```
 
-Choose **option 5 (Full setup)** which runs:
-1. Copy bootstrap scripts
-2. Download Alpine image (~50 MB)
-3. Get QEMU binaries (Termux `.deb` or build from source)
+Builds a `docker-app-builder` Docker image (Ubuntu 22.04 + JDK 17 + Android SDK + Flutter 3.22.2) on first run (~10 min), then runs the Flutter build inside it.
 
-Then verify:
-```bash
-./scripts/verify_assets.sh
-```
+**Output:** `build/docker-vm-debug.apk` or `build/docker-vm-release.apk` (~220 MB debug)
+
+**Builder image is cached** — subsequent builds take ~2–3 minutes.
 
 ---
 
-## Individual scripts
+## `build_alpine_base.sh`
 
-### `copy_bootstrap.sh`
 ```bash
-./scripts/copy_bootstrap.sh
+./scripts/build_alpine_base.sh
 ```
-Copies `guest/api_server.py`, `init_bootstrap.sh`, `requirements.txt` into
-`android/app/src/main/assets/bootstrap/`. Run this after editing guest files.
 
-### `download_alpine.sh`
-```bash
-./scripts/download_alpine.sh
-```
-Downloads Alpine Linux 3.19.1 (aarch64) ISO inside Docker, converts to QCOW2,
-compresses with gzip -9, and places `base.qcow2.gz` in `android/app/src/main/assets/vm/`.
+Builds a custom Alpine Linux 3.19 (aarch64) root filesystem with:
+- Docker CE pre-installed and configured (iptables=false, bridge=none for virt kernel)
+- Python 3 + FastAPI + uvicorn + pydantic pre-installed
+- `api_server.py`, `init_bootstrap.sh` baked in from `guest/`
+- DNS configured with fallback servers and `options use-vc` (TCP-forced DNS)
+- Converts to QCOW2 and gzips the result
 
-### `extract_from_termux.sh`
-```bash
-./scripts/extract_from_termux.sh
-```
-Two options:
-- **Option 1 — adb pull** (fastest): requires an Android device with Termux installed
-  and `qemu-system-aarch64-headless` + `qemu-utils` packages. adb runs on the host.
-- **Option 2 — .deb extraction** (fully Docker): download `.deb` files from
-  `https://packages.termux.dev/apt/termux-main/pool/main/` into `tools/termux_packages/`,
-  then the script extracts binaries inside `debian:bookworm-slim`.
+**Output:** `android/app/src/main/assets/vm/base.qcow2.gz` (~102 MB)
 
-### `build_qemu.sh`
-```bash
-./scripts/build_qemu.sh
-# or specify version:
-QEMU_VERSION=8.2.0 ./scripts/build_qemu.sh
-```
-Cross-compiles QEMU from source inside `debian:bookworm` targeting `aarch64-linux`.
-Takes ~20–30 minutes. Use this if you don't have Termux or `.deb` files.
+**Re-run when:** `guest/api_server.py`, `guest/init_bootstrap.sh`, or `guest/requirements.txt` change.
 
-### `generate_checksums.sh`
-```bash
-./scripts/generate_checksums.sh
-```
-Generates `android/app/src/main/assets/checksums.txt` (SHA-256 of all assets).
-Run after all assets are in place.
-
-### `verify_assets.sh`
-```bash
-./scripts/verify_assets.sh
-```
-Validates binary type, file sizes, format, and checksums inside Docker.
-Run before building the APK.
-
-### `test_api.sh`
-```bash
-./scripts/test_api.sh
-```
-Starts the guest API server inside a Docker-in-Docker container with a real Docker
-daemon, then runs automated HTTP tests against all endpoints. Use this to validate
-`guest/api_server.py` changes without a physical Android device.
-
----
-
-## Output directories
-
-```
-android/app/src/main/assets/
-├── qemu/
-│   ├── qemu-system-aarch64   ← from extract_from_termux.sh or build_qemu.sh
-│   └── qemu-img              ← same
-├── vm/
-│   └── base.qcow2.gz         ← from download_alpine.sh
-├── bootstrap/
-│   ├── api_server.py         ← from copy_bootstrap.sh
-│   ├── init_bootstrap.sh     ← from copy_bootstrap.sh
-│   └── requirements.txt      ← from copy_bootstrap.sh
-└── checksums.txt             ← from generate_checksums.sh
-
-tools/
-├── downloads/                ← Alpine ISO + QCOW2 (intermediate, not committed)
-└── termux_packages/          ← Termux .deb files (not committed)
+After rebuilding the base image, also bump the extraction marker in `VmManager.kt`:
+```kotlin
+// Change the version suffix in assetsReady() and extractAssets():
+File(filesDir, "assets_extracted.vN")  // increment N
 ```
 
 ---
 
-## Requirements
+## `firebase_test.sh`
 
-**Host:** Docker Desktop only.
-**No** wget, curl, qemu-img, ar, dpkg, shasum, file, gzip required on the host.
+```bash
+./scripts/firebase_test.sh docker-28f14 Pixel2.arm 30
+```
+
+Arguments: `<project-id> <device-model> <android-api-level>`
+
+Requires `service-account-key.json` in the project root (Firebase service account, gitignored).
+
+**Test device:** Pixel2.arm — ARM64 physical device, Android 11 (API 30)
+**GCS bucket:** `test-lab-a6uqmcd6pp4xs-yxka23mkk7jy8`
+
+Download logcat after test:
+```bash
+gsutil cp "gs://test-lab-a6uqmcd6pp4xs-yxka23mkk7jy8/<run-id>/Pixel2.arm-30-en-portrait/logcat" /tmp/logcat.txt
+```
+
+---
+
+## Legacy scripts (not part of current workflow)
+
+These scripts were used during initial setup. QEMU binaries are now committed in `jniLibs/` and the base image is built via `build_alpine_base.sh`, so these are no longer needed for normal development.
+
+| Script | Original purpose |
+|---|---|
+| `download_alpine.sh` | Download Alpine ISO and convert to QCOW2 |
+| `extract_from_termux.sh` | Extract QEMU binaries from Termux `.deb` packages |
+| `build_qemu.sh` | Cross-compile QEMU from source for Android ARM64 |
+| `setup_assets.sh` | Interactive menu for the above scripts |
+| `copy_bootstrap.sh` | Copy `guest/` scripts into `assets/bootstrap/` |
+| `verify_assets.sh` | Validate assets before APK build |
+| `generate_checksums.sh` | SHA-256 checksums for assets |
+| `test_api.sh` | Test `api_server.py` end-to-end with Docker-in-Docker |
+
+---
+
+## Asset locations
+
+```
+android/app/src/main/
+├── jniLibs/arm64-v8a/      QEMU + ~50 shared libs (committed to git)
+│   ├── libqemu.so           qemu-system-aarch64
+│   ├── libqemu_img.so       qemu-img
+│   └── lib*.so (×48)        glib, zlib, gnutls, etc.
+└── assets/
+    ├── vm/
+    │   ├── base.qcow2.gz    ← from build_alpine_base.sh  (not committed)
+    │   ├── vmlinuz-virt     ← committed
+    │   └── initramfs-virt   ← committed
+    └── bootstrap/
+        ├── api_server.py    ← from guest/  (committed)
+        ├── init_bootstrap.sh
+        └── requirements.txt
+```

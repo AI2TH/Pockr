@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'screens/dashboard.dart';
 import 'screens/containers.dart';
+import 'screens/terminal.dart';
 import 'screens/settings.dart';
 import 'services/vm_platform.dart';
 
@@ -65,6 +66,7 @@ class _MainScreenState extends State<MainScreen> {
   static const List<Widget> _screens = <Widget>[
     DashboardScreen(),
     ContainersScreen(),
+    TerminalScreen(),
     SettingsScreen(),
   ];
 
@@ -89,6 +91,10 @@ class _MainScreenState extends State<MainScreen> {
           NavigationDestination(
             icon: Icon(Icons.view_list),
             label: 'Containers',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.terminal),
+            label: 'Terminal',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings),

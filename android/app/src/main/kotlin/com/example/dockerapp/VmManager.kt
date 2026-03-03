@@ -11,8 +11,8 @@ import java.util.zip.GZIPInputStream
 
 class VmManager(private val context: Context) {
     private val TAG = "VmManager"
-    private var vmProcess: Process? = null
-    private var isRunning = false
+    @Volatile private var vmProcess: Process? = null
+    @Volatile private var isRunning = false
 
     private val filesDir: File get() = context.filesDir
     private val vmDir: File get() = File(filesDir, "vm")
@@ -41,10 +41,18 @@ class VmManager(private val context: Context) {
     // Public API
     // -------------------------------------------------------------------------
 
+    @Synchronized
     fun startVm() {
         Log.d(TAG, "Starting VM...")
 
-        if (!assetsReady()) {
+        // Stop any existing VM first to release port 7080 and file locks on user.qcow2
+        if (isRunning || vmProcess != null) {
+            Log.d(TAG, "Stopping existing VM before restart")
+            stopVm()
+        }
+
+        val freshExtraction = !assetsReady()
+        if (freshExtraction) {
             Log.d(TAG, "Assets not ready, extracting...")
             extractAssets()
         }
@@ -58,8 +66,17 @@ class VmManager(private val context: Context) {
 
         val baseImage = File(vmDir, "base.qcow2")
         val userImage = File(vmDir, "user.qcow2")
-        if (!userImage.exists()) {
+        // Recreate the overlay only when base.qcow2 was freshly extracted (content
+        // changed) or the overlay does not exist yet.  Keeping a persistent overlay
+        // means Docker image layers pulled in previous sessions survive VM restarts,
+        // so subsequent pulls are instant.  Ext4 journaling handles unclean-shutdown
+        // recovery automatically at the next boot.
+        if (freshExtraction || !userImage.exists()) {
+            Log.d(TAG, "Creating fresh user.qcow2 (freshExtraction=$freshExtraction)")
+            userImage.delete()
             createUserImage(userImage.absolutePath, baseImage.absolutePath)
+        } else {
+            Log.d(TAG, "Reusing existing user.qcow2 (Docker image cache preserved)")
         }
 
         val cmd = buildQemuCommand(
@@ -94,6 +111,7 @@ class VmManager(private val context: Context) {
         Log.d(TAG, "VM process launched")
     }
 
+    @Synchronized
     fun stopVm() {
         Log.d(TAG, "Stopping VM...")
         vmProcess?.let { proc ->
@@ -146,6 +164,8 @@ class VmManager(private val context: Context) {
 
     fun getLogs(name: String, tail: Int): String = apiClient.getLogs(name, tail)
 
+    fun vmExec(cmd: String): Map<String, Any> = apiClient.vmExec(cmd)
+
     // -------------------------------------------------------------------------
     // Token management
     // -------------------------------------------------------------------------
@@ -176,7 +196,7 @@ class VmManager(private val context: Context) {
     // -------------------------------------------------------------------------
 
     private fun assetsReady(): Boolean {
-        val marker = File(filesDir, "assets_extracted.v5")
+        val marker = File(filesDir, "assets_extracted.v11")
         return marker.exists()
             && resolveQemuBinary().exists()
             && File(vmDir, "base.qcow2").exists()
@@ -216,7 +236,7 @@ class VmManager(private val context: Context) {
                 .onFailure { Log.w(TAG, "Bootstrap asset $name not found") }
         }
 
-        File(filesDir, "assets_extracted.v5").createNewFile()
+        File(filesDir, "assets_extracted.v11").createNewFile()
         Log.d(TAG, "Assets extracted to $filesDir")
     }
 

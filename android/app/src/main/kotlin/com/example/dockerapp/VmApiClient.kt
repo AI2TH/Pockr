@@ -20,6 +20,13 @@ class VmApiClient(private val token: String) {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    // docker pull (300s) + docker run (30s) + buffer = 360s
+    private val containerClient = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(360, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+
     private fun Request.Builder.withAuth(): Request.Builder =
         header("Authorization", "Bearer $token")
 
@@ -55,7 +62,7 @@ class VmApiClient(private val token: String) {
             .post(body)
             .build()
 
-        val response = client.newCall(request).execute()
+        val response = containerClient.newCall(request).execute()
         if (!response.isSuccessful) {
             val err = response.body?.string() ?: response.code.toString()
             response.close()
@@ -107,6 +114,27 @@ class VmApiClient(private val token: String) {
             Log.e(TAG, "Error listing containers: ${e.message}")
             emptyList()
         }
+    }
+
+    fun vmExec(cmd: String): Map<String, Any> {
+        val json = JsonObject().apply { addProperty("cmd", cmd) }
+        val body = gson.toJson(json).toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url("$baseUrl/vm/exec")
+            .withAuth()
+            .post(body)
+            .build()
+
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+            val err = response.body?.string() ?: response.code.toString()
+            response.close()
+            throw Exception("VM exec failed: $err")
+        }
+        val jsonStr = response.body?.string() ?: "{}"
+        response.close()
+        @Suppress("UNCHECKED_CAST")
+        return gson.fromJson(jsonStr, Map::class.java) as Map<String, Any>
     }
 
     fun getLogs(name: String, tail: Int): String {

@@ -63,7 +63,11 @@ iface eth0 inet static
   gateway 10.0.2.2
 NET
 
-echo "nameserver 10.0.2.3" > /mnt/alpine/etc/resolv.conf
+# Try QEMU's internal DNS proxy first (10.0.2.3), then Google DNS directly.
+# 'use-vc' forces TCP for all DNS queries — helps when SLIRP UDP is unreliable.
+# 'timeout:2 attempts:2' keeps failure detection fast (default is 5s × 3).
+printf 'nameserver 10.0.2.3\nnameserver 8.8.8.8\nnameserver 8.8.4.4\noptions timeout:2 attempts:2 use-vc\n' \
+    > /mnt/alpine/etc/resolv.conf
 
 cat > /mnt/alpine/etc/fstab << 'FSTAB'
 /dev/vda / ext4 rw,relatime 0 1
@@ -88,7 +92,8 @@ cat > /mnt/alpine/etc/docker/daemon.json << 'DOCKERCFG'
   "iptables": false,
   "bridge": "none",
   "ip-masq": false,
-  "userland-proxy": false
+  "userland-proxy": false,
+  "dns": ["8.8.8.8", "8.8.4.4"]
 }
 DOCKERCFG
 

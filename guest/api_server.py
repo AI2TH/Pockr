@@ -91,6 +91,9 @@ class ContainerStartRequest(BaseModel):
     cmd: List[str] = []
     env: Optional[List[dict]] = []
     ports: Optional[List[dict]] = []
+    # "host" shares the VM's eth0/SLIRP network — works without bridge kernel module.
+    # "none" for isolated containers, "bridge" requires linux-virt kernel modules.
+    network: Optional[str] = "host"
 
 
 class ContainerStopRequest(BaseModel):
@@ -103,6 +106,10 @@ class ImagePullRequest(BaseModel):
 
 class ExecRequest(BaseModel):
     name: str
+    cmd: str
+
+
+class VmExecRequest(BaseModel):
     cmd: str
 
 
@@ -142,7 +149,7 @@ async def list_containers():
     """List running containers."""
     try:
         result = subprocess.run(
-            ["docker", "ps", "--format", "{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}"],
+            ["docker", "ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}"],
             capture_output=True, text=True, check=True
         )
         containers = []
@@ -166,8 +173,24 @@ async def list_containers():
 
 @app.post("/containers/start", dependencies=[Depends(require_auth)])
 async def start_container(req: ContainerStartRequest):
-    """Start a container."""
-    cmd = ["docker", "run", "-d", "--name", req.name]
+    """Start a container (pulls image first if not cached)."""
+    network = req.network or "host"
+
+    # Pull image explicitly so we can give it a generous timeout independently
+    # of the docker run step. Implicit pull inside docker run would share the
+    # same 30s run timeout and time out on slow networks.
+    logger.info("Pulling image: %s", req.image)
+    try:
+        subprocess.run(
+            ["docker", "pull", req.image],
+            capture_output=True, text=True, check=True, timeout=300
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Image pull timed out")
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Docker error: {e.stderr}")
+
+    cmd = ["docker", "run", "-d", "--network", network, "--name", req.name]
 
     for env in (req.env or []):
         if "key" in env and "value" in env:
@@ -182,7 +205,7 @@ async def start_container(req: ContainerStartRequest):
 
     logger.info("Starting container: %s", " ".join(cmd))
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
         return {"status": "started", "name": req.name, "id": result.stdout.strip()}
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Docker error: {e.stderr}")
@@ -239,6 +262,25 @@ async def get_logs(name: str, tail: int = 100):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/vm/exec", dependencies=[Depends(require_auth)])
+async def vm_exec(req: VmExecRequest):
+    """Execute a shell command on the VM host (not inside a container)."""
+    try:
+        result = subprocess.run(
+            ["sh", "-c", req.cmd],
+            capture_output=True, text=True, timeout=30
+        )
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exitCode": result.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Command timed out")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/exec", dependencies=[Depends(require_auth)])
 async def exec_in_container(req: ExecRequest):
     """Execute a command in a running container."""
@@ -265,4 +307,4 @@ async def exec_in_container(req: ExecRequest):
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting Docker VM API server on 127.0.0.1:7080")
-    uvicorn.run(app, host="127.0.0.1", port=7080, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=7080, log_level="info")

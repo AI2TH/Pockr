@@ -9,12 +9,14 @@ import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.dockerapp/vm"
-    private lateinit var vmManager: VmManager
+    // VmManager lives in the Application singleton so it survives Activity recreations.
+    // A new MainActivity (e.g. from Robo test relaunch) reuses the same VmManager,
+    // preserving vmProcess/isRunning and preventing port 7080 contention.
+    private val vmManager get() = (applicationContext as DockerApp).vmManager
     private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        vmManager = VmManager(this)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -113,6 +115,19 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(logs) }
                         } catch (e: Exception) {
                             runOnUiThread { result.error("LOGS_ERROR", e.message, null) }
+                        }
+                    }
+
+                    "vmExec" -> executor.execute {
+                        try {
+                            val cmd = call.argument<String>("cmd")
+                                ?: return@execute runOnUiThread {
+                                    result.error("VM_EXEC_ERROR", "cmd required", null)
+                                }
+                            val output = vmManager.vmExec(cmd)
+                            runOnUiThread { result.success(output) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("VM_EXEC_ERROR", e.message, null) }
                         }
                     }
 

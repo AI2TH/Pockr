@@ -70,7 +70,7 @@ echo "Docker: $(docker --version)"
 # ---------------------------------------------------------------------------
 # Start API server
 # ---------------------------------------------------------------------------
-echo "Starting API server on 127.0.0.1:7080..."
+echo "Starting API server on 0.0.0.0:7080..."
 mkdir -p /var/log
 API_TOKEN="$TOKEN" nohup /usr/bin/python3 /bootstrap/api_server.py \
     > /var/log/docker-api.log 2>&1 &

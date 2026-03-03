@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/vm_platform.dart';
 import '../models/container.dart' as models;
 
@@ -20,12 +21,14 @@ class _ContainersScreenState extends State<ContainersScreen> {
   }
 
   Future<void> _loadContainers() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
     });
 
     try {
       final containerMaps = await VmPlatform.listContainers();
+      if (!mounted) return;
       setState(() {
         _containers = containerMaps
             .map((map) => models.Container.fromJson(map))
@@ -34,9 +37,11 @@ class _ContainersScreenState extends State<ContainersScreen> {
     } catch (e) {
       debugPrint('Error loading containers: $e');
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -57,9 +62,18 @@ class _ContainersScreenState extends State<ContainersScreen> {
           : _containers.isEmpty
               ? _buildEmptyState()
               : _buildContainerList(),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showAddContainerDialog(),
-        child: const Icon(Icons.add),
+      floatingActionButton: Consumer<VmState>(
+        builder: (context, vmState, _) {
+          final ready = vmState.isHealthy;
+          return FloatingActionButton(
+            onPressed: ready ? () => _showAddContainerDialog() : null,
+            backgroundColor: ready
+                ? const Color(0xFF1D6FE5)
+                : Colors.grey.withOpacity(0.4),
+            tooltip: ready ? 'Run container' : 'VM not ready',
+            child: const Icon(Icons.add),
+          );
+        },
       ),
     );
   }
@@ -169,8 +183,8 @@ class _ContainersScreenState extends State<ContainersScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      builder: (sheetCtx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(sheetCtx).viewInsets.bottom),
         child: Container(
           decoration: const BoxDecoration(
             color: Color(0xFF161F2E),
@@ -211,7 +225,7 @@ class _ContainersScreenState extends State<ContainersScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pop(sheetCtx),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.white60,
                         side: BorderSide(color: Colors.white.withOpacity(0.15)),
@@ -234,7 +248,7 @@ class _ContainersScreenState extends State<ContainersScreen> {
                         final cmd = cmdController.text.trim().split(' ')
                             .where((s) => s.isNotEmpty)
                             .toList();
-                        Navigator.pop(context);
+                        Navigator.pop(sheetCtx);
                         try {
                           await VmPlatform.startContainer(image, name, cmd);
                           if (mounted) {

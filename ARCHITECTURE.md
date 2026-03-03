@@ -1,315 +1,279 @@
-# Single-App, No-Root Architecture — Primary Plan (Android App with Embedded Linux VM)
+# Architecture — Docker on Android (No Root)
 
 ## 1. Objective
 
-Deliver a single Android app (one APK) that runs Docker/OCI containers on non-rooted devices by embedding and launching a lightweight Linux VM in the background. The app provides all UX and orchestration, with no external dependencies (no Termux) and no root required.
-
-Primary plan: this single-app VM approach is the default and recommended implementation. Detailed implementation and extended guidance are provided in [ARCHITECTURE2.md](ARCHITECTURE2.md).
+A single Android APK that runs Docker/OCI containers on non-rooted devices by embedding a QEMU virtual machine running Alpine Linux. No external apps (no Termux), no root required.
 
 ---
 
-## 2. Why No-Root Requires a VM
+## 2. Why a VM is Required
 
-- Stock Android kernels on non-rooted devices typically lack:
-  - cgroups v1/v2 configuration suitable for Docker
-  - full container namespaces/overlayfs access for user apps
-  - privileges/capabilities to run a container daemon
-- `CONFIG_USER_NS` (user namespace support) is absent from the Android GKI ARM64 `gki_defconfig` (defaults to `n`) and `# CONFIG_PID_NS is not set` is explicitly present; production `non_debuggable.config` enforces these restrictions as security hardening. These configs are VTS-enforced since Android O. [Source: [android.googlesource.com — gki_defconfig](https://android.googlesource.com/kernel/common/+/refs/heads/android-mainline/arch/arm64/configs/gki_defconfig); [kernel/configs README](https://android.googlesource.com/kernel/configs/+/refs/heads/master/README.md)]
-- Docker rootless mode requires user namespace support (`CONFIG_USER_NS`), `newuidmap`/`newgidmap` tools, and `/etc/subuid` entries with ≥65,536 subordinate UIDs per user — none of which are available on a stock Android kernel. [Source: [docs.docker.com/engine/security/rootless/](https://docs.docker.com/engine/security/rootless/)]
-- Rootless Podman has the same user namespace dependency and cannot bypass this kernel constraint on stock Android.
-- A VM (QEMU user-mode/system emulation) provides a complete Linux environment with its own kernel and userspace, enabling Docker/Podman inside the guest without device root.
+Stock Android kernels on non-rooted devices lack the features Docker needs:
 
-Validation reference (community-tested approach):
-- Running Docker on Android without root via a VM from Termux (QEMU + Alpine) has been demonstrated and is adapted here to a single APK:
-  - https://github.com/mabdulmoghni/termux-docker-no-root
+- `CONFIG_USER_NS` is absent from the Android GKI ARM64 `gki_defconfig` — Docker rootless mode requires user namespaces. [Source: [gki_defconfig](https://android.googlesource.com/kernel/common/+/refs/heads/android-mainline/arch/arm64/configs/gki_defconfig)]
+- cgroups, overlayfs, and network namespaces are restricted for regular app processes
+- No mechanism to run a container daemon with the required capabilities
+
+A QEMU VM provides a complete Linux environment with its own kernel. Docker runs normally inside the guest without any device root.
+
+Validated approach: [termux-docker-no-root](https://github.com/mabdulmoghni/termux-docker-no-root) — community demonstration of Docker on Android via QEMU + Alpine (no root).
 
 ---
 
 ## 3. High-Level Architecture
 
-```mermaid
-flowchart TD
-    A[Android OS (non-rooted)]
-    B[Single Android App (APK)]
-    C[Embedded Linux VM (QEMU)]
-    D[API Server inside VM]
-    E[Container Runtime inside VM (Docker/Podman)]
-    F[Logs/Images inside VM]
-    G[User (GUI)]
-    H[App Private Storage]
-
-    A --> B
-    B --> H
-    B --> C
-    C --> D
-    D --> E
-    E --> F
-    G --> B
-    B --> D
 ```
+Android OS (non-rooted)
+└── APK (Flutter + Kotlin)
+    ├── DockerApp (Application singleton)
+    │   └── VmManager — asset extraction, QEMU lifecycle
+    │       └── VmApiClient — HTTP client (auth token)
+    ├── VmService — ForegroundService (persistent notification)
+    └── Flutter UI — 4 tabs: Dashboard, Containers, Terminal, Settings
+          └── VmPlatform (MethodChannel) ──▶ Kotlin
 
-Key properties:
-- The APK contains QEMU binaries and a compressed Linux base image (QCOW2).
-- On first run, the app extracts assets to app-private storage and initializes the VM.
-- An API server runs inside the VM; the app communicates via hostfwd (localhost TCP ports).
-- Docker/Podman is installed and managed inside the VM; containers and logs live in the VM filesystem.
+QEMU process (qemu-system-aarch64)
+└── Alpine Linux 3.19 (aarch64) VM
+    ├── Docker daemon (iptables=false, bridge=none, --network host)
+    └── FastAPI server (api_server.py) on 0.0.0.0:7080
+          ↑
+          SLIRP hostfwd tcp::7080-:7080
+          ↑
+http://127.0.0.1:7080 (from Android app)
+```
 
 ---
 
-## 4. Components and Responsibilities
+## 4. Components
 
-### 4.1 Android App (Kotlin/Java or Flutter/React Native with native modules)
-- UI/UX: container list, details, images, logs, settings, notifications.
-- Orchestration Service: lifecycle of VM, health checks, auto-restart.
-- Communication: HTTP client (OkHttp/Retrofit) to VM API via localhost port forwarding.
-- Asset Manager: decompress and verify QEMU binaries + base image (QCOW2), bootstrap scripts.
-- Security & Settings: token management, retention policies, privacy options.
+### 4.1 Android App (Kotlin + Flutter)
 
-### 4.2 Embedded Linux VM
-- QEMU binary (qemu-system-aarch64 or qemu-system-x86_64 depending on device CPU).
-- Base image: Alpine Linux (virt-optimized) QCOW2 for minimal footprint.
-- Guest network: slirp (user-mode) with host port forwarding for API access:
-  - Example: hostfwd tcp::7080-:7080 (VM API), hostfwd tcp::2222-:22 (optional SSH)
-- Bootstrapping: init script or systemd service to start API server and install Docker/Podman on first boot.
+**DockerApp** (`Application` subclass) holds the `VmManager` singleton, ensuring the QEMU process survives Activity recreation.
 
-### 4.3 VM Internal Services
-- API Server (inside VM): FastAPI/Flask/Express/Go exposing:
-  - POST /containers/start { image, name, cmd }
-  - POST /containers/stop { name }
-  - GET /containers
-  - POST /images/pull { image }
-  - GET /logs?name=...&tail=...
-  - POST /exec { name, cmd }
-- Container Runtime: Docker or Podman installed via apk/apt.
-- Log Storage: /var/log/containers/<name>.log with rotation and compression.
+**VmManager** handles:
+- First-run asset extraction from `AssetManager` to app-private storage
+- `user.qcow2` overlay creation via `libqemu_img.so`
+- QEMU launch via `ProcessBuilder`
+- Health checking and lifecycle (start/stop/restart)
+
+**VmApiClient** is an OkHttp client that:
+- Signs every request with `Authorization: Bearer <token>`
+- Uses a 360 s read timeout on the container endpoint (300 s pull + 30 s run + buffer)
+- Uses a 10 s read timeout on the health endpoint
+
+**VmService** is a `ForegroundService` that keeps the VM alive when the app is backgrounded and shows a persistent notification.
+
+**Flutter UI** uses a `MethodChannel` to call Kotlin from Dart and a `VmState` provider that polls `/health` every 5 seconds.
+
+### 4.2 QEMU Setup
+
+QEMU binaries are installed by Android's `PackageManager` from `jniLibs/arm64-v8a/` into `nativeLibraryDir` with `exec_type` SELinux label — safe to execute on Android 10+.
+
+| File | Role |
+|---|---|
+| `libqemu.so` | `qemu-system-aarch64` |
+| `libqemu_img.so` | `qemu-img` (creates `user.qcow2`) |
+| `lib*.so` (×48) | Shared dependencies (glib, zlib, gnutls, etc.) |
+
+`LD_LIBRARY_PATH` is set to `nativeLibraryDir` when launching both QEMU processes.
+
+### 4.3 VM Disk Layout
+
+| Image | Type | Description |
+|---|---|---|
+| `base.qcow2.gz` | Asset (compressed) | Read-only Alpine root with Docker + Python |
+| `base.qcow2` | Extracted | Decompressed on first run |
+| `user.qcow2` | QCOW2 overlay | Writable overlay backed by `base.qcow2` (8 GB virtual) |
+
+`user.qcow2` is **persistent**: it is only recreated when `base.qcow2` was freshly extracted (app update changed the base image) or when it does not exist yet. All pulled Docker image layers survive VM restarts.
+
+### 4.4 Guest (Alpine VM)
+
+**init_bootstrap.sh** runs on the very first boot to install Docker CE and start the API server. OpenRC brings up Docker and the API server on every subsequent boot.
+
+**api_server.py** is a FastAPI application that exposes the REST API. It listens on `0.0.0.0:7080` — SLIRP delivers hostfwd connections to the guest's `eth0` address (`10.0.2.15`), not loopback.
+
+Docker daemon config (`/etc/docker/daemon.json`):
+```json
+{
+  "iptables": false,
+  "bridge": "none",
+  "dns": ["8.8.8.8", "8.8.4.4"],
+  "ip-masq": false,
+  "userland-proxy": false
+}
+```
+`linux-virt` kernel does not include `nf_tables`, `bridge`, or `overlay` modules. This config avoids all of them. Storage driver auto-selects `vfs`.
 
 ---
 
-## 5. Single-App Implementation Plan (Step-by-Step)
+## 5. Networking
 
-### 5.1 App Packaging (Build-Time)
-- Bundle assets into the APK:
-  - /assets/qemu/ (qemu-system-*, qemu-img, supporting libs)
-  - /assets/images/base.qcow2.gz (compressed base image)
-  - /assets/bootstrap/ (guest init scripts, API server files, systemd/init configs)
-- Include device-arch builds:
-  - Prefer aarch64; add x86_64 fallback for emulators/Intel devices.
-- Code-sign and configure Play Store delivery.
+### SLIRP (user-mode networking)
 
-### 5.2 First-Run Initialization (Runtime)
-- Extract assets to app-private storage:
-  - /data/data/<app>/files/qemu/
-  - /data/data/<app>/files/vm/base.qcow2
-  - /data/data/<app>/files/vm/user.qcow2 (created by qemu-img for user data)
-- Verify checksums (SHA-256) to ensure asset integrity.
-- Create user image:
-  - qemu-img create -f qcow2 user.qcow2 8G
-- Use base as backing file for user image to keep size minimal.
-
-### 5.3 VM Launch and Networking
-- QEMU launch command (example for aarch64 with Alpine):
 ```
-qemu-system-aarch64 \
-  -machine virt \
-  -cpu cortex-a53 \
-  -smp 2 \
-  -m 2048 \
-  -drive if=none,file=/data/data/<app>/files/vm/base.qcow2,id=base,format=qcow2,readonly=on \
-  -drive if=none,file=/data/data/<app>/files/vm/user.qcow2,id=user,format=qcow2 \
-  -device virtio-blk-pci,drive=user \
-  -netdev user,id=net0,hostfwd=tcp::7080-:7080,hostfwd=tcp::2222-:22 \
-  -device virtio-net-pci,netdev=net0 \
-  -display none \
-  -daemonize
+Android :7080  ──hostfwd──▶  guest 10.0.2.15:7080
 ```
+
+Key constraints:
+- No root required
+- ICMP/ping does not work inside the guest
+- Guest is not directly accessible from outside — only via explicit `hostfwd` ports
+- Performance is lower than tap/bridge networking
+
+### DNS in the VM
+
+`/etc/resolv.conf`:
+```
+nameserver 10.0.2.3
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+options timeout:2 attempts:2 use-vc
+```
+
+`use-vc` forces all DNS queries to TCP. SLIRP's UDP DNS proxy (`10.0.2.3`) is unreliable on some devices/networks; `8.8.8.8` and `8.8.4.4` as fallbacks ensure Docker Hub pulls succeed.
+
+### Android network security
+
+Android 9+ blocks cleartext HTTP by default. `res/xml/network_security_config.xml` explicitly allows cleartext for `127.0.0.1`. Referenced from `AndroidManifest.xml`.
+
+---
+
+## 6. Token Authentication
+
+1. `VmManager` generates a UUID on first launch and stores it in `vm_app_prefs`
+2. Every QEMU boot injects the token via `-append`:
+   ```
+   console=ttyAMA0 root=/dev/vda ... api_token=<UUID> quiet
+   ```
+3. `api_server.py` reads it at startup from `/proc/cmdline`
+4. Every API call (except `/health`) requires `Authorization: Bearer <UUID>`
+
+---
+
+## 7. Guest API Reference
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/health` | No | Docker daemon status + version |
+| GET | `/containers` | Yes | List all containers |
+| POST | `/containers/start` | Yes | Pull image (300 s) then run (30 s) |
+| POST | `/containers/stop` | Yes | Stop a named container |
+| GET | `/logs` | Yes | Container logs (`?name=&tail=`) |
+| POST | `/images/pull` | Yes | Explicit image pull (300 s) |
+| POST | `/exec` | Yes | Exec command inside a container |
+| POST | `/vm/exec` | Yes | Run shell command on the Alpine VM host |
+
+### `/containers/start` timeout chain
+
+```
+api_server.py:  docker pull (timeout=300s) + docker run (timeout=30s)
+VmApiClient:    containerClient readTimeout = 360s
+```
+
+### `/vm/exec`
+
+Runs `sh -c <cmd>` on the Alpine host (not inside a container). Returns `{stdout, stderr, exitCode}`. Used by the Terminal screen. Timeout: 30 s.
+
+---
+
+## 8. Settings and SharedPreferences
+
+The Settings screen writes vCPU count and RAM to Flutter `SharedPreferences`. On Android, `SharedPreferences` stores integers as `Long`. `VmManager` handles this:
+
+```kotlin
+private fun getFlutterInt(key: String, default: Int): Int {
+    return try {
+        flutterPrefs.getInt(key, default)
+    } catch (_: ClassCastException) {
+        flutterPrefs.getLong(key, default.toLong()).toInt()
+    }
+}
+```
+
+| Preference | File | Key |
+|---|---|---|
+| vCPU count | `FlutterSharedPreferences` | `flutter.vcpu_count` |
+| RAM (MB) | `FlutterSharedPreferences` | `flutter.ram_mb` |
+| API token | `vm_app_prefs` | `api_token` |
+
+---
+
+## 9. QEMU Launch Command
+
+```
+libqemu.so
+  -machine virt
+  -cpu cortex-a53
+  -smp <vcpu>
+  -m <ram>
+  -drive if=none,file=base.qcow2,id=base,format=qcow2,readonly=on
+  -drive if=none,file=user.qcow2,id=user,format=qcow2
+  -device virtio-blk-pci,drive=user
+  -netdev user,id=net0,hostfwd=tcp::7080-:7080
+  -device virtio-net-pci,netdev=net0,romfile=
+  -fw_cfg name=opt/api_token,string=<TOKEN>
+  -display none
+  -serial stdio
+  -kernel vmlinuz-virt
+  -initrd initramfs-virt
+  -append "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rootflags=rw modules=virtio_blk,ext4 api_token=<TOKEN> quiet"
+```
+
 Notes:
-- Use -daemonize to background the VM; track PID for lifecycle management.
-- slirp user-mode networking avoids root; hostfwd exposes VM services on localhost.
-
-Slirp user-mode networking constraints (authoritative):
-- **Performance:** "a lot of overhead so the performance is poor" compared to tap/bridge networking. [Source: [wiki.qemu.org/Documentation/Networking](https://wiki.qemu.org/Documentation/Networking)]
-- **ICMP/ping:** "ICMP traffic does not work (so you cannot use ping within a guest)." [Source: [wiki.qemu.org/Documentation/Networking](https://wiki.qemu.org/Documentation/Networking)]
-- **Guest accessibility:** "the guest is not directly accessible from the host or the external network" — only explicitly hostfwd'd ports are reachable inbound. [Source: [wiki.qemu.org/Documentation/Networking](https://wiki.qemu.org/Documentation/Networking)]
-- TCP and UDP port forwarding via hostfwd is fully supported; advanced NAT features available with tap are not.
-
-### 5.4 Guest Bootstrap (First Boot)
-- A systemd/init script inside the guest performs:
-  - Package update (apk update) and install Docker/Podman.
-  - Enable Docker service (rc-update add docker default) or Podman socket.
-  - Start API server on port 7080.
-  - Create runtime directories (/var/lib/docker, /var/log/containers).
-- The app waits for API health endpoint (GET /health) before enabling UI controls.
-
-### 5.5 App ⇄ VM Communication
-- Android app uses OkHttp/Retrofit to call http://127.0.0.1:7080.
-- Authentication:
-  - Token generated by the app on first run; written to guest via a seed file (mounted virtio-9p or injected via init).
-  - API validates Authorization: Bearer <token>.
-- Endpoints (example payloads):
-  - POST /containers/start { image, name, cmd, env, ports }
-  - POST /containers/stop { name }
-  - GET /containers -> [{ name, image, status, ports }]
-  - POST /images/pull { image }
-  - GET /logs?name=...&tail=100 -> text or NDJSON
-  - POST /exec { name, cmd } -> { stdout, stderr, exitCode }
-
-### 5.6 Background Services & Notifications
-- Android ForegroundService monitors:
-  - VM process state, CPU/mem usage (host-side)
-  - Container status via API polling
-  - Logs for alert patterns (error/exception)
-- Sends actionable notifications (view logs, restart container).
-
-Play Store policy compliance:
-- ForegroundService is required for persistent background work on Android; must display a persistent notification while the VM is running.
-- Declare the appropriate `foregroundServiceType` (e.g., `dataSync` or `specialUse`) in `AndroidManifest.xml`; `specialUse` requires a Play Store declaration explaining the use case.
-- Background execution limits (Android 8.0+) prevent silent background starts; the ForegroundService must be started from a foreground context or via `startForegroundService()`.
-- Disclose battery and network usage in app store listing and in-app settings; include data usage disclosure if the VM pulls container images over the network. [Source: [developer.android.com/develop/background-work/services/fgs](https://developer.android.com/develop/background-work/services/fgs)]
-
-### 5.7 Storage & Retention (App Settings)
-- Retention policy (default 30 days or 256MB per container).
-- Rotate logs inside VM (logrotate or custom cron).
-- Export/import images and logs via app UI:
-  - Export to scoped storage (SAF/MediaStore).
-- Optional encryption for archives before export.
-
-### 5.8 Security Considerations (No Root)
-- VM networking restricted to localhost via hostfwd only.
-- API listens only on VM loopback; exposed to Android host via port-forward.
-- Token-based authentication; input validation to avoid command injection.
-- App-private storage for assets and guest disks; inaccessible to other apps.
-- Optional: encrypt user.qcow2 using LUKS inside VM (passphrase managed by app).
-- **SELinux / App Sandbox constraints:** Android enforces SELinux in enforcing mode; asset extraction must write only to app-private directories (`getFilesDir()`, `getNoBackupFilesDir()`). Executing extracted binaries (QEMU) requires the files to be in an executable-allowed path; use `context.getCodeCacheDir()` or `getFilesDir()` and ensure the partition is not mounted `noexec`. Test on production SELinux policy, not just emulators.
-- **Disable Docker remote TCP:** Do not enable Docker's TCP socket (`-H tcp://0.0.0.0:2375`) inside the VM; rely solely on the internal API server over hostfwd.
+- `-serial stdio` routes ttyAMA0 output to Java stdout → Android logcat
+- `romfile=` on `virtio-net-pci` avoids the ROM lookup that fails without PCI ROM support
+- Token appears in both `-fw_cfg` and `-append`; guest uses `/proc/cmdline` (kernel cmdline) as primary because it doesn't require the `qemu_fw_cfg` kernel module
 
 ---
 
-## 6. Performance Guidance
-- Prefer Alpine Linux (virt) for small footprint and fast boot.
-- Tune QEMU:
-  - vCPU = 2 by default; user can set 1–4.
-  - RAM = 2GB default; allow 512MB–4GB based on device capability.
-- Use backing file layering (base.qcow2 + user.qcow2) for efficient updates.
-- **KVM:** Hardware-accelerated virtualization via KVM typically requires root or explicit kernel/device support that is not available on stock consumer Android. Treat KVM as unavailable by default; size performance expectations around software TCG emulation. If a device exposes `/dev/kvm` without root (e.g., some developer boards or emulators), provide an opt-in toggle but do not rely on it. [Source: [wiki.qemu.org/License](https://wiki.qemu.org/License) — TCG BSD; KVM requires kernel module access]
+## 10. Build System
+
+| Stage | Docker image | Output |
+|---|---|---|
+| Alpine base | `arm64v8/alpine:3.19` | `base.qcow2.gz` |
+| APK build | `ubuntu:22.04` (amd64) | `docker-vm-debug.apk` |
+
+The APK builder must use `--platform linux/amd64` on Apple Silicon Macs. The builder image is tagged `docker-app-builder`.
 
 ---
 
-## 7. Implementation Modules (Android App)
+## 11. Asset Extraction Versioning
 
-- app-ui: Activities/Fragments (Dashboard, Containers, Images, Logs, Settings).
-- app-core: ViewModels, repositories, Retrofit clients, token manager.
-- vm-manager: JNI/native wrapper to spawn/kill QEMU, write PID files, check health.
-- asset-manager: Decompress assets, checksum verification, migrations.
-- notifier: WorkManager/ForegroundService, notifications, log alerts.
-- settings: Preferences, retention policies, networking, resource caps.
+`VmManager.assetsReady()` checks for a marker file (`assets_extracted.vN`). Bump `N` whenever `base.qcow2.gz` changes (i.e., after rebuilding the Alpine base image) to force re-extraction on the next app launch.
 
-Directory example (inside app-private):
-- /data/data/<app>/files/qemu/
-- /data/data/<app>/files/vm/base.qcow2
-- /data/data/<app>/files/vm/user.qcow2
-- /data/data/<app>/files/vm/bootstrap/ (guest seeds, init scripts)
+Current version: **v11**
 
 ---
 
-## 8. Explicit VM API Contract (Inside Guest)
+## 12. Security Notes
 
-- GET /health -> { status: "ok", runtime: "docker", version: "x.y.z" }
-- GET /containers -> [{ name, image, status, ports }]
-- POST /containers/start
-  - body: { name, image, cmd, env: [{k,v}], ports: [{host,container}] }
-  - response: { status: "started", name, id }
-- POST /containers/stop
-  - body: { name }
-  - response: { status: "stopped", name }
-- POST /images/pull
-  - body: { image }
-  - response: { status: "pulled", image }
-- GET /logs
-  - query: name, tail, follow (optional)
-  - response: text stream or NDJSON for follow
-- POST /exec
-  - body: { name, cmd }
-  - response: { stdout, stderr, exitCode }
-
-Authentication:
-- Header: Authorization: Bearer <token> (seeded by app at first run)
+- VM API is only accessible via `127.0.0.1:7080` (SLIRP hostfwd) — not reachable from outside the device
+- App-private storage (`/data/data/<app>/files/`) is inaccessible to other apps
+- Docker remote TCP socket is **not** enabled — all Docker management goes through the internal API server
+- Guest API validates the auth token on every authenticated endpoint
 
 ---
 
-## 9. UX Flow
+## 13. Limitations
 
-```mermaid
-flowchart TD
-    A[Splash/Init]
-    B[Asset Extraction & Checksum]
-    C[VM Launch]
-    D[API Health Check]
-    E[Dashboard]
-    F[Container Details]
-    G[Images]
-    H[Logs]
-    I[Settings]
-
-    A --> B --> C --> D --> E
-    E --> F
-    E --> G
-    E --> H
-    E --> I
-```
+- ARM64 only — `jniLibs` contains only `arm64-v8a` QEMU binaries
+- No KVM — software TCG emulation only (KVM requires kernel module access unavailable on stock Android)
+- SLIRP networking — lower throughput than tap/bridge; no ICMP
+- Docker containers must use `--network host` — bridge networking requires kernel modules not present in `linux-virt`
+- Battery and RAM overhead — a 2 GB RAM allocation is recommended; the VM runs continuously in the background
 
 ---
 
-## 10. Limitations
-
-- Battery and resource usage: VM incurs overhead; defaults tuned conservatively.
-- File I/O: VM disk images consume space; configurable size and retention.
-- Hardware acceleration (KVM) may not be available on many devices; performance varies (see Section 6).
-- No direct integration with Android kernel features (by design, for no-root compliance).
-
-### 10.1 Licensing Compliance Checklist
-
-QEMU is released under the GNU General Public License, version 2 (GPLv2). The Tiny Code Generator (TCG) is released under the BSD (Expat) license. Distributing QEMU binaries in an APK requires:
-
-- [ ] Include the full GPLv2 license text in the app (About / Licenses screen or bundled text file).
-- [ ] Include the TCG BSD license text.
-- [ ] Include third-party notices for all QEMU dependencies (e.g., libffi, glib, pixman as applicable).
-- [ ] Make QEMU source (or a written offer) available per GPLv2 §3 if distributing binaries.
-- [ ] Review individual QEMU source file headers; files in `linux-user/` and `bsd-user/` are GPLv2-only (no "or later" option).
-- [ ] Include Alpine Linux and Docker/Podman license notices for guest packages bundled in the base image.
-- [ ] Maintain a third-party-notices screen accessible from app Settings.
-
-[Source: [wiki.qemu.org/License](https://wiki.qemu.org/License)]
-
----
-
-## 11. Testing & Rollout
-
-- Instrumentation tests for UI and API calls (mock VM).
-- Integration tests with real VM on test devices (aarch64).
-- Staged rollout in Play Store; capture crash analytics and user feedback; iterate on resource defaults.
-
----
-
-## 12. Summary
-
-This primary architecture delivers a single, no-root Android app that runs a background Linux VM to host Docker/Podman and exposes a stable API for container management. It is implementation-ready with clear modules, startup flow, networking, security, and storage policies. Users get a seamless experience: install APK, app initializes VM, and containers are managed entirely through the app UI.
-
-Validated approach:
-- Docker on Android without root requires a VM; this design embeds that VM and automates everything inside one app.
-- Reference (community validation for VM-based Docker): https://github.com/mabdulmoghni/termux-docker-no-root
-
----
-
-## 13. References
+## 14. References
 
 | Topic | Source |
 |---|---|
-| QEMU hostfwd syntax and slirp networking | https://wiki.qemu.org/Documentation/Networking |
+| QEMU hostfwd / SLIRP networking | https://wiki.qemu.org/Documentation/Networking |
 | QEMU license (GPLv2 + TCG BSD) | https://wiki.qemu.org/License |
 | Docker rootless mode prerequisites | https://docs.docker.com/engine/security/rootless/ |
 | Android GKI ARM64 defconfig (CONFIG_USER_NS absent) | https://android.googlesource.com/kernel/common/+/refs/heads/android-mainline/arch/arm64/configs/gki_defconfig |
-| Android kernel configs README (VTS enforcement) | https://android.googlesource.com/kernel/configs/+/refs/heads/master/README.md |
-| Android ForegroundService (background work) | https://developer.android.com/develop/background-work/services/fgs |
+| Android ForegroundService | https://developer.android.com/develop/background-work/services/fgs |
 | Community validation: Docker on Android via VM | https://github.com/mabdulmoghni/termux-docker-no-root |
 
-_Last updated: 2026-02-24_
+_Last updated: 2026-03-03_

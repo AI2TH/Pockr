@@ -76,6 +76,16 @@ class VmPlatform {
     }
   }
 
+  static Future<Map<String, dynamic>> vmExec(String cmd) async {
+    try {
+      final result = await platform.invokeMethod('vmExec', {'cmd': cmd});
+      return Map<String, dynamic>.from(result as Map);
+    } on PlatformException catch (e) {
+      debugPrint("Failed to vmExec: ${e.message}");
+      rethrow;
+    }
+  }
+
   static Future<String> getLogs(String name, int tail) async {
     try {
       final String result = await platform.invokeMethod('getLogs', {
