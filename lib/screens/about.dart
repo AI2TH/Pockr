@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-const _kProjectUrl = 'https://github.com/AI2TH/docker-on-android';
+const _kProjectUrl = 'https://github.com/AI2TH/Pockr';
 const _kCompany = 'AI2TH';
 const _kVersion = '1.0.0';
 const _kTagline = 'Docker on Android — no root required';
