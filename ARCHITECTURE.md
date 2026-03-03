@@ -197,6 +197,10 @@ private fun getFlutterInt(key: String, default: Int): Int {
 | RAM (MB) | `FlutterSharedPreferences` | `flutter.ram_mb` |
 | API token | `vm_app_prefs` | `api_token` |
 
+### MethodChannel numeric types
+
+Numeric values returned from Kotlin via `MethodChannel` are decoded as `Double` in Dart, not `Int`. Always cast with `(result['exitCode'] as num?)?.toInt()`, never `as int?` directly.
+
 ---
 
 ## 9. QEMU Launch Command
@@ -232,7 +236,7 @@ Notes:
 | Stage | Docker image | Output |
 |---|---|---|
 | Alpine base | `arm64v8/alpine:3.19` | `base.qcow2.gz` |
-| APK build | `ubuntu:22.04` (amd64) | `docker-vm-debug.apk` |
+| APK build | `ubuntu:22.04` (amd64) | `pockr-release.apk` (~164 MB) |
 
 The APK builder must use `--platform linux/amd64` on Apple Silicon Macs. The builder image is tagged `docker-app-builder`.
 
@@ -276,4 +280,4 @@ Current version: **v11**
 | Android ForegroundService | https://developer.android.com/develop/background-work/services/fgs |
 | Community validation: Docker on Android via VM | https://github.com/mabdulmoghni/termux-docker-no-root |
 
-_Last updated: 2026-03-03_
+_Last updated: 2026-03-03 (v29)_

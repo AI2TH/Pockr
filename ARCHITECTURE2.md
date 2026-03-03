@@ -144,11 +144,23 @@ assetsReady() → true AND user.qcow2 exists
 - Device: `Pixel2.arm` — ARM64, Android 11 (API 30)
 - Project: `docker-28f14`
 - GCS bucket: `test-lab-a6uqmcd6pp4xs-yxka23mkk7jy8`
-- Latest passing build: **v27** (Terminal screen)
+- Latest passing build: **v28** (release APK, Pockr branding, About screen)
 
 ```bash
 ./scripts/firebase_test.sh docker-28f14 Pixel2.arm 30
 ```
+
+### v28 logcat findings (2026-03-03)
+
+| Event | Time | Notes |
+|---|---|---|
+| Assets extracted, QEMU launched | 01:11:06 | Fresh extraction, ~1 s |
+| VM running / API warming up | 01:11:06 | Alpine boots in ~60–90 s |
+| `alpine_*` + `busybox` containers started | 01:14:40–01:14:48 | Pull + run via API — confirmed working |
+| `free -h` crash | 01:14:21 | `exitCode` returned as `Double` not `Int` — **fixed in v29** |
+| Dashboard header "Docker on Android" | visible | Old hardcoded title — **fixed in v29** |
+
+VM was stopped 3× by the Robo test tapping "Stop Engine". This is expected Robo behaviour, not a crash.
 
 ---
 
@@ -160,4 +172,4 @@ assetsReady() → true AND user.qcow2 exists
 - RUNPATH was cleared in-place with `scripts/fix_elf_inplace.py` (zeroes `d_val` only, preserves `d_tag`)
 - Baseline restored from git commit `f7bc7d1` (pre-patchelf)
 
-_Last updated: 2026-03-03_
+_Last updated: 2026-03-03 (v29)_
