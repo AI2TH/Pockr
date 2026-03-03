@@ -87,7 +87,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
               Text(
-                'Docker on Android',
+                'Container Engine',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.4),
                   fontSize: 12,

@@ -51,7 +51,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
           trimmed,
           (result['stdout'] as String?) ?? '',
           (result['stderr'] as String?) ?? '',
-          (result['exitCode'] as int?) ?? -1,
+          (result['exitCode'] as num?)?.toInt() ?? -1,
         ));
       });
     } catch (e) {
