@@ -1,0 +1,5 @@
+# QEMU binaries go here — run scripts/extract_from_termux.sh to populate.
+# Required files:
+#   qemu-system-aarch64   (~15-20 MB, ELF aarch64)
+#   qemu-img              (~2-3 MB, ELF aarch64)
+#   efi.fd                (optional ARM64 UEFI firmware)

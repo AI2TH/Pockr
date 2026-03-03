@@ -1,0 +1,95 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
+}
+
+android {
+    namespace "com.example.dockerapp"
+    compileSdk 34
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    aaptOptions {
+        // Prevent aapt2 from decompressing .gz assets — we handle decompression at runtime
+        // Also skip compression on kernel/initrd (already compressed binaries)
+        noCompress "gz", "virt"
+    }
+
+    defaultConfig {
+        applicationId "com.example.dockerapp"
+        minSdk 26
+        targetSdk 34
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file("debug.keystore")
+            storePassword "android"
+            keyAlias "debug"
+            keyPassword "android"
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            // Force extraction of native libs to disk so ProcessBuilder can execute them.
+            // Without this, AGP 3.6+ keeps libs compressed inside the APK (not on disk).
+            useLegacyPackaging true
+        }
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    implementation "com.google.code.gson:gson:2.10.1"
+    implementation "androidx.work:work-runtime-ktx:2.9.0"
+    implementation "androidx.core:core-ktx:1.12.0"
+}

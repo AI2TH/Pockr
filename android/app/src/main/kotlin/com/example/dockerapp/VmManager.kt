@@ -1,0 +1,363 @@
+package com.example.dockerapp
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.os.Build
+import android.util.Log
+import java.io.File
+import java.io.FileOutputStream
+import java.util.UUID
+import java.util.zip.GZIPInputStream
+
+class VmManager(private val context: Context) {
+    private val TAG = "VmManager"
+    @Volatile private var vmProcess: Process? = null
+    @Volatile private var isRunning = false
+
+    private val filesDir: File get() = context.filesDir
+    private val vmDir: File get() = File(filesDir, "vm")
+    private val bootstrapDir: File get() = File(filesDir, "bootstrap")
+
+    // QEMU binaries are installed by Android into nativeLibraryDir as .so files.
+    // This directory is SELinux-labelled exec_type — safe to execute on Android 10+.
+    // libqemu.so      = qemu-system-aarch64
+    // libqemu_img.so  = qemu-img
+    private val nativeLibDir: File
+        get() = File(context.applicationInfo.nativeLibraryDir)
+
+    // Flutter SharedPreferences stores keys with "flutter." prefix
+    private val flutterPrefs: SharedPreferences
+        get() = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+
+    // App-private prefs for internal state (token, extraction version)
+    private val appPrefs: SharedPreferences
+        get() = context.getSharedPreferences("vm_app_prefs", Context.MODE_PRIVATE)
+
+    private val token: String by lazy { getOrCreateToken() }
+
+    val apiClient: VmApiClient by lazy { VmApiClient(token) }
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    @Synchronized
+    fun startVm() {
+        Log.d(TAG, "Starting VM...")
+
+        // Stop any existing VM first to release port 7080 and file locks on user.qcow2
+        if (isRunning || vmProcess != null) {
+            Log.d(TAG, "Stopping existing VM before restart")
+            stopVm()
+        }
+
+        val freshExtraction = !assetsReady()
+        if (freshExtraction) {
+            Log.d(TAG, "Assets not ready, extracting...")
+            extractAssets()
+        }
+
+        val qemuBin = resolveQemuBinary()
+        Log.d(TAG, "QEMU binary: ${qemuBin.absolutePath}")
+
+        // Flutter SharedPreferences stores ints as Long on Android — handle both types
+        val vcpu = getFlutterInt("flutter.vcpu_count", 2)
+        val ramMb = getFlutterInt("flutter.ram_mb", 2048)
+
+        val baseImage = File(vmDir, "base.qcow2")
+        val userImage = File(vmDir, "user.qcow2")
+        // Recreate the overlay only when base.qcow2 was freshly extracted (content
+        // changed) or the overlay does not exist yet.  Keeping a persistent overlay
+        // means Docker image layers pulled in previous sessions survive VM restarts,
+        // so subsequent pulls are instant.  Ext4 journaling handles unclean-shutdown
+        // recovery automatically at the next boot.
+        if (freshExtraction || !userImage.exists()) {
+            Log.d(TAG, "Creating fresh user.qcow2 (freshExtraction=$freshExtraction)")
+            userImage.delete()
+            createUserImage(userImage.absolutePath, baseImage.absolutePath)
+        } else {
+            Log.d(TAG, "Reusing existing user.qcow2 (Docker image cache preserved)")
+        }
+
+        val cmd = buildQemuCommand(
+            qemuBin = qemuBin.absolutePath,
+            baseImage = baseImage.absolutePath,
+            userImage = userImage.absolutePath,
+            vcpu = vcpu,
+            ramMb = ramMb
+        )
+
+        Log.d(TAG, "QEMU command: ${cmd.joinToString(" ")}")
+
+        vmProcess = ProcessBuilder(cmd).apply {
+            // Add nativeLibDir to LD_LIBRARY_PATH for any shared libs QEMU needs
+            environment()["LD_LIBRARY_PATH"] = nativeLibDir.absolutePath
+            redirectErrorStream(true)
+        }.start()
+
+        isRunning = true
+
+        // Drain QEMU stdout/stderr in background to prevent pipe buffer deadlock
+        Thread {
+            try {
+                vmProcess?.inputStream?.bufferedReader()?.forEachLine { line ->
+                    Log.d("QEMU", line)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "QEMU output reader closed: ${e.message}")
+            }
+        }.apply { isDaemon = true; start() }
+
+        Log.d(TAG, "VM process launched")
+    }
+
+    @Synchronized
+    fun stopVm() {
+        Log.d(TAG, "Stopping VM...")
+        vmProcess?.let { proc ->
+            proc.destroy()  // SIGTERM
+            // Wait up to 5 s for graceful exit, then force-kill to release file locks
+            if (!proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                Log.w(TAG, "QEMU did not exit in 5s, force-killing")
+                proc.destroyForcibly()
+                proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+            }
+        }
+        vmProcess = null
+        isRunning = false
+        Log.d(TAG, "VM stopped")
+    }
+
+    fun checkHealth(): Boolean {
+        if (!isRunning) return false
+        vmProcess?.let {
+            try {
+                it.exitValue()
+                Log.w(TAG, "QEMU process exited unexpectedly")
+                isRunning = false
+                return false
+            } catch (_: IllegalThreadStateException) { }
+        }
+        return apiClient.checkHealth()
+    }
+
+    fun getStatus(): String {
+        if (!isRunning) return "stopped"
+        vmProcess?.let {
+            return try {
+                it.exitValue()
+                isRunning = false
+                "stopped"
+            } catch (_: IllegalThreadStateException) {
+                "running"
+            }
+        }
+        return "stopped"
+    }
+
+    fun startContainer(image: String, name: String, cmd: List<String>) =
+        apiClient.startContainer(image, name, cmd)
+
+    fun stopContainer(name: String) = apiClient.stopContainer(name)
+
+    fun listContainers(): List<Map<String, Any>> = apiClient.listContainers()
+
+    fun getLogs(name: String, tail: Int): String = apiClient.getLogs(name, tail)
+
+    fun vmExec(cmd: String): Map<String, Any> = apiClient.vmExec(cmd)
+
+    // -------------------------------------------------------------------------
+    // Token management
+    // -------------------------------------------------------------------------
+
+    // Flutter SharedPreferences stores integers as Long on Android (not Int).
+    // Use this helper to safely read either type.
+    private fun getFlutterInt(key: String, default: Int): Int {
+        return try {
+            flutterPrefs.getInt(key, default)
+        } catch (_: ClassCastException) {
+            flutterPrefs.getLong(key, default.toLong()).toInt()
+        }
+    }
+
+    private fun getOrCreateToken(): String {
+        var t = appPrefs.getString("api_token", null)
+        if (t == null) {
+            t = UUID.randomUUID().toString()
+            appPrefs.edit().putString("api_token", t).apply()
+            Log.d(TAG, "Generated new API token")
+        }
+        return t
+    }
+
+    // -------------------------------------------------------------------------
+    // Asset extraction (vm images + bootstrap scripts only)
+    // QEMU binaries are handled by Android via jniLibs — no manual extraction
+    // -------------------------------------------------------------------------
+
+    private fun assetsReady(): Boolean {
+        val marker = File(filesDir, "assets_extracted.v11")
+        return marker.exists()
+            && resolveQemuBinary().exists()
+            && File(vmDir, "base.qcow2").exists()
+            && File(vmDir, "vmlinuz-virt").exists()
+            && File(vmDir, "initramfs-virt").exists()
+    }
+
+    private fun extractAssets() {
+        vmDir.mkdirs()
+        bootstrapDir.mkdirs()
+
+        // Base image — aapt2 decompresses .gz assets and drops the extension.
+        // Try the already-decompressed path first, fall back to .gz.
+        val baseQcow2 = File(vmDir, "base.qcow2")
+        if (!baseQcow2.exists()) {
+            try {
+                extractAsset("vm/base.qcow2", baseQcow2)
+                Log.d(TAG, "Extracted base.qcow2 (aapt2 pre-decompressed)")
+            } catch (_: Exception) {
+                extractAndDecompress("vm/base.qcow2.gz", baseQcow2)
+                Log.d(TAG, "Extracted + decompressed base.qcow2.gz")
+            }
+        }
+
+        // Kernel and initrd
+        listOf("vmlinuz-virt", "initramfs-virt").forEach { name ->
+            val dest = File(vmDir, name)
+            if (!dest.exists()) {
+                extractAsset("vm/$name", dest)
+                Log.d(TAG, "Extracted $name")
+            }
+        }
+
+        // Bootstrap scripts
+        listOf("api_server.py", "requirements.txt", "init_bootstrap.sh").forEach { name ->
+            runCatching { extractAsset("bootstrap/$name", File(bootstrapDir, name)) }
+                .onFailure { Log.w(TAG, "Bootstrap asset $name not found") }
+        }
+
+        File(filesDir, "assets_extracted.v11").createNewFile()
+        Log.d(TAG, "Assets extracted to $filesDir")
+    }
+
+    private fun extractAsset(assetPath: String, dest: File) {
+        context.assets.open(assetPath).use { input ->
+            FileOutputStream(dest).use { input.copyTo(it) }
+        }
+        Log.d(TAG, "Extracted $assetPath → ${dest.absolutePath}")
+    }
+
+    private fun extractAndDecompress(assetPath: String, dest: File) {
+        context.assets.open(assetPath).use { raw ->
+            GZIPInputStream(raw).use { gz ->
+                FileOutputStream(dest).use { gz.copyTo(it) }
+            }
+        }
+        Log.d(TAG, "Decompressed $assetPath → ${dest.absolutePath}")
+    }
+
+    // -------------------------------------------------------------------------
+    // QCOW2 user image creation via qemu-img (from nativeLibraryDir)
+    // -------------------------------------------------------------------------
+
+    private fun createUserImage(userImagePath: String, baseImagePath: String) {
+        val qemuImg = File(nativeLibDir, "libqemu_img.so")
+        if (!qemuImg.exists()) {
+            throw IllegalStateException(
+                "libqemu_img.so not found in nativeLibraryDir: ${nativeLibDir.absolutePath}"
+            )
+        }
+
+        val proc = ProcessBuilder(
+            qemuImg.absolutePath, "create",
+            "-f", "qcow2",
+            "-b", baseImagePath,
+            "-F", "qcow2",
+            userImagePath,
+            "8G"
+        ).apply {
+            environment()["LD_LIBRARY_PATH"] = nativeLibDir.absolutePath
+        }.start()
+
+        val exitCode = proc.waitFor()
+        if (exitCode != 0) {
+            val err = proc.errorStream.bufferedReader().readText()
+            throw RuntimeException("qemu-img create failed (exit $exitCode): $err")
+        }
+        Log.d(TAG, "Created user.qcow2 at $userImagePath")
+    }
+
+    // -------------------------------------------------------------------------
+    // QEMU launch command
+    // -------------------------------------------------------------------------
+
+    private fun buildQemuCommand(
+        qemuBin: String,
+        baseImage: String,
+        userImage: String,
+        vcpu: Int,
+        ramMb: Int
+    ): List<String> {
+        val cmd = mutableListOf<String>()
+
+        cmd += qemuBin
+
+        if (isArm64()) {
+            cmd += listOf("-machine", "virt")
+            cmd += listOf("-cpu", "cortex-a53")
+        } else {
+            cmd += listOf("-machine", "q35")
+            cmd += listOf("-cpu", "qemu64")
+        }
+
+        cmd += listOf("-smp", vcpu.toString())
+        cmd += listOf("-m", ramMb.toString())
+
+        cmd += listOf("-drive", "if=none,file=$baseImage,id=base,format=qcow2,readonly=on")
+        cmd += listOf("-drive", "if=none,file=$userImage,id=user,format=qcow2")
+        cmd += listOf("-device", "virtio-blk-pci,drive=user")
+
+        cmd += listOf("-netdev", "user,id=net0,hostfwd=tcp::7080-:7080")
+        cmd += listOf("-device", "virtio-net-pci,netdev=net0,romfile=")
+
+        cmd += listOf("-fw_cfg", "name=opt/api_token,string=$token")
+        cmd += listOf("-display", "none")
+        cmd += listOf("-serial", "stdio")  // route ttyAMA0 → Java stdout → logcat
+
+        val kernel = File(vmDir, "vmlinuz-virt")
+        val initrd = File(vmDir, "initramfs-virt")
+        if (kernel.exists() && initrd.exists()) {
+            cmd += listOf("-kernel", kernel.absolutePath)
+            cmd += listOf("-initrd", initrd.absolutePath)
+            // Alpine live initramfs only loads modules listed in KOPT_modules/rootfstype.
+            // Pass them explicitly so virtio_blk and ext4 are loaded before mount.
+            // "rw" is ignored by Alpine's init; rootflags=rw is the correct form.
+            // api_token passed here so init_bootstrap.sh can read it from /proc/cmdline
+            // without needing the qemu_fw_cfg kernel module.
+            cmd += listOf("-append",
+                "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rootflags=rw " +
+                "modules=virtio_blk,ext4 api_token=$token quiet")
+        }
+
+        return cmd
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private fun isArm64(): Boolean =
+        Build.SUPPORTED_ABIS.any { it.startsWith("arm64") }
+
+    private fun resolveQemuBinary(): File {
+        // QEMU is installed by Android's PackageManager into nativeLibraryDir as libqemu.so
+        val bin = File(nativeLibDir, "libqemu.so")
+        if (!bin.exists()) {
+            throw IllegalStateException(
+                "libqemu.so not found in nativeLibraryDir: ${nativeLibDir.absolutePath}. " +
+                "Ensure jniLibs/arm64-v8a/libqemu.so is present in the project."
+            )
+        }
+        return bin
+    }
+}

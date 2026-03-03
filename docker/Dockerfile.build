@@ -1,0 +1,66 @@
+# Flutter Android build environment — built on top of ubuntu:22.04
+# Layers: ubuntu → JDK 17 → Android SDK → Flutter SDK
+#
+# Build: docker build -f docker/Dockerfile.build -t docker-app-builder .
+# Use:   scripts/build_apk.sh
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8
+
+# ── 1. System packages ────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openjdk-17-jdk-headless \
+        wget \
+        unzip \
+        git \
+        curl \
+        ca-certificates \
+        xz-utils \
+        libglu1-mesa \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── 2. Android SDK (command-line tools → platform + build-tools) ──────────────
+ENV ANDROID_HOME=/opt/android-sdk \
+    ANDROID_SDK_ROOT=/opt/android-sdk
+
+RUN mkdir -p "${ANDROID_HOME}/cmdline-tools"
+
+# Download Android command-line tools
+RUN wget -q \
+        "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
+        -O /tmp/cmdtools.zip \
+    && unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools \
+    && mv /tmp/cmdtools/cmdline-tools "${ANDROID_HOME}/cmdline-tools/latest" \
+    && rm -rf /tmp/cmdtools /tmp/cmdtools.zip
+
+ENV PATH="${PATH}:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/build-tools/34.0.0"
+
+# Accept licenses then install required SDK packages
+RUN yes | sdkmanager --licenses > /dev/null 2>&1 || true
+RUN sdkmanager \
+        "platform-tools" \
+        "platforms;android-34" \
+        "build-tools;34.0.0"
+
+# ── 3. Flutter SDK ────────────────────────────────────────────────────────────
+ENV FLUTTER_VERSION=3.22.2 \
+    FLUTTER_HOME=/opt/flutter \
+    PUB_CACHE=/root/.pub-cache
+
+RUN wget -q \
+        "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
+        -O /tmp/flutter.tar.xz \
+    && tar -xf /tmp/flutter.tar.xz -C /opt \
+    && rm /tmp/flutter.tar.xz
+
+ENV PATH="${PATH}:${FLUTTER_HOME}/bin"
+
+# Configure Flutter and warm up caches
+RUN flutter config --no-analytics \
+    && flutter config --android-sdk "${ANDROID_HOME}" \
+    && flutter precache --android \
+    && dart pub cache preload 2>/dev/null || true
+
+WORKDIR /workspace

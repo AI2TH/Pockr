@@ -1,0 +1,6 @@
+# Alpine Linux VM image goes here — run scripts/download_alpine.sh to populate.
+# Required files:
+#   base.qcow2.gz   (~50 MB, gzip-compressed Alpine virt QCOW2)
+# Optional (for direct kernel boot, avoids UEFI):
+#   vmlinuz-virt    (Alpine virt kernel)
+#   initramfs-virt  (Alpine virt initramfs)
