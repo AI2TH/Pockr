@@ -64,21 +64,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
       child: Row(
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: const Color(0xFF1D6FE5),
-              borderRadius: BorderRadius.circular(8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.asset(
+              'assets/images/logo.jpeg',
+              width: 36,
+              height: 36,
+              fit: BoxFit.cover,
             ),
-            child: const Icon(Icons.widgets_rounded, color: Colors.white, size: 20),
           ),
           const SizedBox(width: 12),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Docker on Android',
+                'Pockr',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 18,
@@ -87,7 +87,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
               Text(
-                'Container Engine',
+                'Docker on Android',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.4),
                   fontSize: 12,
