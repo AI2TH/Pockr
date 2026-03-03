@@ -1,6 +1,10 @@
-# docker-on-android
+# Pockr — Docker on Android
 
 Run Docker containers on a non-rooted Android device — no Termux, no root, one APK.
+
+## Download
+
+**[Download APK (Google Drive)](https://drive.google.com/drive/folders/1LWLATGacL_hoWuJ4V6S4hUEbBOqTci11?usp=drive_link)**
 
 The app embeds QEMU running Alpine Linux. Docker runs inside the VM. A FastAPI server inside the VM exposes a REST API over localhost, which the Flutter UI calls to manage containers.
 
@@ -32,6 +36,7 @@ Android App (Flutter + Kotlin)
 - **Terminal** — shell access directly into the Alpine VM host
 - Configurable vCPU count and RAM (1–4 cores, 512 MB–4 GB)
 - Persistent notification while VM is running (ForegroundService)
+- **About screen** — company info, project URL, open source licenses, APK download link
 
 ---
 
@@ -55,10 +60,11 @@ docker-app/
 ├── lib/                        Flutter UI (Dart)
 │   ├── main.dart               4 tabs: Dashboard, Containers, Terminal, Settings
 │   ├── screens/
-│   │   ├── dashboard.dart      VM status, start/stop
+│   │   ├── dashboard.dart      VM status, start/stop, Pockr branding
 │   │   ├── containers.dart     Container list, logs
 │   │   ├── terminal.dart       VM shell terminal
-│   │   └── settings.dart       vCPU / RAM sliders
+│   │   ├── settings.dart       vCPU / RAM sliders, About navigation
+│   │   └── about.dart          About screen, licenses, download link
 │   └── services/
 │       └── vm_platform.dart    MethodChannel + VmState (health polling)
 │
@@ -118,16 +124,18 @@ The QEMU binaries and kernel/initrd are already committed in `jniLibs/` and `ass
 ### 3. Build the APK
 
 ```bash
-./scripts/build_apk.sh
-# Output: build/docker-vm-debug.apk (~220 MB)
+./scripts/build_apk.sh release
+# Output: build/pockr-release.apk (~164 MB)
 ```
+
+For a debug build: `./scripts/build_apk.sh` → `build/pockr-debug.apk` (~220 MB)
 
 First build takes ~10 minutes (downloads JDK + Android SDK + Flutter inside Ubuntu Docker image). Subsequent builds reuse the cached builder image.
 
 ### 4. Install
 
 ```bash
-adb install -r build/docker-vm-debug.apk
+adb install -r build/pockr-release.apk
 ```
 
 ---
@@ -242,7 +250,9 @@ Requires `service-account-key.json` in the project root (gitignored).
 | Docker | Apache 2.0 |
 | Flutter | BSD 3-Clause |
 
-QEMU source or written offer is available per GPLv2 §3. Third-party notices are accessible in the app under **Settings → About**.
+All four components can be used in commercial and proprietary projects. QEMU runs as a separate process (not linked), so GPLv2 copyleft does not apply to your own app code — you only need to include the license text and make the QEMU source available.
+
+See [`LICENSES.md`](LICENSES.md) for the full breakdown and compliance checklist.
 
 ---
 

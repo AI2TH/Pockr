@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const _kProjectUrl = 'https://github.com/AI2TH/Pockr';
+const _kDownloadUrl = 'https://drive.google.com/drive/folders/1LWLATGacL_hoWuJ4V6S4hUEbBOqTci11?usp=drive_link';
 const _kCompany = 'AI2TH';
 const _kVersion = '1.0.0';
 const _kTagline = 'Docker on Android — no root required';
@@ -176,6 +177,30 @@ class AboutScreen extends StatelessWidget {
                   tooltip: 'Open in browser',
                   icon: const Icon(Icons.open_in_new_outlined, size: 18),
                   onPressed: () => _launch(_kProjectUrl),
+                ),
+              ],
+            ),
+          ),
+
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Download APK'),
+            subtitle: const Text(
+              'Google Drive',
+              style: TextStyle(fontSize: 12),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Copy URL',
+                  icon: const Icon(Icons.copy_outlined, size: 18),
+                  onPressed: () => _copy(context, _kDownloadUrl),
+                ),
+                IconButton(
+                  tooltip: 'Open in browser',
+                  icon: const Icon(Icons.open_in_new_outlined, size: 18),
+                  onPressed: () => _launch(_kDownloadUrl),
                 ),
               ],
             ),

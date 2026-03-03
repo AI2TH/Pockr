@@ -1,6 +1,8 @@
 # Quick Setup Guide
 
-Get the Docker VM app running in 3 steps. **Docker Desktop is the only host requirement** — no Homebrew, no Android SDK, no Flutter, no QEMU.
+Get **Pockr** running in 3 steps. **Docker Desktop is the only host requirement** — no Homebrew, no Android SDK, no Flutter, no QEMU.
+
+> **Just want to try it?** [Download the APK directly from Google Drive](https://drive.google.com/drive/folders/1LWLATGacL_hoWuJ4V6S4hUEbBOqTci11?usp=drive_link) and skip to Step 3.
 
 ---
 
@@ -32,18 +34,18 @@ The base image is Alpine Linux with Docker + Python pre-installed. It's baked in
 ## Step 2 — Build the APK
 
 ```bash
-./scripts/build_apk.sh
-# Output: build/docker-vm-debug.apk (~220 MB)
+./scripts/build_apk.sh release
+# Output: build/pockr-release.apk (~164 MB)
 ```
 
 - Runs entirely inside Docker — builds a Ubuntu/JDK/Android SDK/Flutter environment on first run (~10 min)
 - Subsequent builds reuse the cached builder image (~2–3 min)
 
-For a release build:
+For a debug build:
 
 ```bash
-./scripts/build_apk.sh release
-# Output: build/docker-vm-release.apk
+./scripts/build_apk.sh
+# Output: build/pockr-debug.apk (~220 MB)
 ```
 
 ---
@@ -51,7 +53,7 @@ For a release build:
 ## Step 3 — Install and run
 
 ```bash
-adb install -r build/docker-vm-debug.apk
+adb install -r build/pockr-release.apk
 ```
 
 Or transfer the APK manually to the device and install it.
