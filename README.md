@@ -36,6 +36,7 @@ Android App (Flutter + Kotlin)
 - **Terminal** — shell access directly into the Alpine VM host
 - Configurable vCPU count and RAM (1–4 cores, 512 MB–4 GB)
 - Persistent notification while VM is running (ForegroundService)
+- **About screen** — company info, project URL, open source licenses, APK download link
 
 ---
 
@@ -59,10 +60,11 @@ docker-app/
 ├── lib/                        Flutter UI (Dart)
 │   ├── main.dart               4 tabs: Dashboard, Containers, Terminal, Settings
 │   ├── screens/
-│   │   ├── dashboard.dart      VM status, start/stop
+│   │   ├── dashboard.dart      VM status, start/stop, Pockr branding
 │   │   ├── containers.dart     Container list, logs
 │   │   ├── terminal.dart       VM shell terminal
-│   │   └── settings.dart       vCPU / RAM sliders
+│   │   ├── settings.dart       vCPU / RAM sliders, About navigation
+│   │   └── about.dart          About screen, licenses, download link
 │   └── services/
 │       └── vm_platform.dart    MethodChannel + VmState (health polling)
 │
@@ -122,16 +124,18 @@ The QEMU binaries and kernel/initrd are already committed in `jniLibs/` and `ass
 ### 3. Build the APK
 
 ```bash
-./scripts/build_apk.sh
-# Output: build/docker-vm-debug.apk (~220 MB)
+./scripts/build_apk.sh release
+# Output: build/pockr-release.apk (~164 MB)
 ```
+
+For a debug build: `./scripts/build_apk.sh` → `build/pockr-debug.apk` (~220 MB)
 
 First build takes ~10 minutes (downloads JDK + Android SDK + Flutter inside Ubuntu Docker image). Subsequent builds reuse the cached builder image.
 
 ### 4. Install
 
 ```bash
-adb install -r build/docker-vm-debug.apk
+adb install -r build/pockr-release.apk
 ```
 
 ---
