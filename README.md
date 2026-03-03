@@ -1,6 +1,10 @@
-# docker-on-android
+# Pockr — Docker on Android
 
 Run Docker containers on a non-rooted Android device — no Termux, no root, one APK.
+
+## Download
+
+**[Download APK (Google Drive)](https://drive.google.com/drive/folders/1LWLATGacL_hoWuJ4V6S4hUEbBOqTci11?usp=drive_link)**
 
 The app embeds QEMU running Alpine Linux. Docker runs inside the VM. A FastAPI server inside the VM exposes a REST API over localhost, which the Flutter UI calls to manage containers.
 
@@ -242,7 +246,9 @@ Requires `service-account-key.json` in the project root (gitignored).
 | Docker | Apache 2.0 |
 | Flutter | BSD 3-Clause |
 
-QEMU source or written offer is available per GPLv2 §3. Third-party notices are accessible in the app under **Settings → About**.
+All four components can be used in commercial and proprietary projects. QEMU runs as a separate process (not linked), so GPLv2 copyleft does not apply to your own app code — you only need to include the license text and make the QEMU source available.
+
+See [`LICENSES.md`](LICENSES.md) for the full breakdown and compliance checklist.
 
 ---
 
