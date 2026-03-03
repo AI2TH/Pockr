@@ -87,7 +87,7 @@ class VmManager(private val context: Context) {
             ramMb = ramMb
         )
 
-        Log.d(TAG, "QEMU command: ${cmd.joinToString(" ")}")
+        Log.d(TAG, "QEMU command: ${cmd.joinToString(" ").replace(token, "<redacted>")}")
 
         vmProcess = ProcessBuilder(cmd).apply {
             // Add nativeLibDir to LD_LIBRARY_PATH for any shared libs QEMU needs
