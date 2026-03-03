@@ -6,7 +6,7 @@
 #   1. Firebase project created at console.firebase.google.com
 #   2. Service account JSON key at: service-account-key.json (project root)
 #      - Go to GCP Console → IAM → Service Accounts → Create → Editor role → Download JSON
-#   3. APK built at: build/docker-vm-debug.apk
+#   3. APK built at: build/pockr-release.apk  (or build/pockr-debug.apk)
 #
 # Usage:
 #   ./scripts/firebase_test.sh <gcp-project-id> [device] [android-version]
@@ -26,7 +26,11 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 GCP_PROJECT="${1}"
 DEVICE="${2:-Pixel6}"
 ANDROID_VERSION="${3:-31}"
-APK="${PROJECT_ROOT}/build/docker-vm-debug.apk"
+APK="${4:-${PROJECT_ROOT}/build/pockr-release.apk}"
+# Fall back to debug build if release not found
+if [ ! -f "${APK}" ]; then
+  APK="${PROJECT_ROOT}/build/pockr-debug.apk"
+fi
 KEY_FILE="${PROJECT_ROOT}/service-account-key.json"
 
 if ! command -v docker &>/dev/null; then
