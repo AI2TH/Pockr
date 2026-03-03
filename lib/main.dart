@@ -18,7 +18,7 @@ class DockerApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => VmState(),
       child: MaterialApp(
-        title: 'Docker VM',
+        title: 'Pockr',
         theme: ThemeData(
           colorScheme: ColorScheme.dark(
             primary: const Color(0xFF1D6FE5),

@@ -62,7 +62,7 @@ git config --global --add safe.directory /opt/flutter 2>/dev/null || true
 echo '--- Step 1: Scaffold fresh Flutter project ---'
 flutter create \
     --no-pub \
-    --project-name docker_app \
+    --project-name pockr \
     --org com.example.dockerapp \
     --platforms android \
     /tmp/workspace
@@ -95,6 +95,9 @@ cp -r /src/android/app/src/main/res/.  android/app/src/main/res/
 mkdir -p android/app/src/main/assets
 cp -r /src/android/app/src/main/assets/.  android/app/src/main/assets/
 
+# Flutter assets (logo, images)
+[ -d /src/assets ] && cp -r /src/assets/. assets/ || true
+
 # Native libs (QEMU + all shared libs — arm64-v8a)
 mkdir -p android/app/src/main/jniLibs
 cp -r /src/android/app/src/main/jniLibs/. android/app/src/main/jniLibs/
@@ -116,13 +119,17 @@ echo '--- Step 3: flutter pub get ---'
 flutter pub get
 
 echo ''
+echo '--- Step 3b: Generate launcher icons from logo ---'
+dart run flutter_launcher_icons
+
+echo ''
 echo '--- Step 4: flutter build apk (${BUILD_TYPE}) ---'
 flutter build apk --${BUILD_TYPE} --verbose 2>&1 | tail -50
 
 echo ''
 echo '--- Step 5: Copy APK to output ---'
 APK_SRC=\"build/app/outputs/flutter-apk/app-${BUILD_TYPE}.apk\"
-APK_OUT=\"docker-vm-${BUILD_TYPE}.apk\"
+APK_OUT=\"pockr-${BUILD_TYPE}.apk\"
 if [ -f \"\$APK_SRC\" ]; then
     cp \"\$APK_SRC\" /out/\$APK_OUT
     echo \"APK size: \$(du -sh /out/\$APK_OUT | cut -f1)\"
@@ -134,7 +141,7 @@ fi
 "
 
 echo ""
-echo "✅  Build complete: ${OUTPUT_DIR}/docker-vm-${BUILD_TYPE}.apk"
+echo "✅  Build complete: ${OUTPUT_DIR}/pockr-${BUILD_TYPE}.apk"
 echo ""
 echo "Install on connected device:"
-echo "  adb install ${OUTPUT_DIR}/docker-vm-${BUILD_TYPE}.apk"
+echo "  adb install ${OUTPUT_DIR}/pockr-${BUILD_TYPE}.apk"

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'about.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -116,44 +117,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'About',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-          ),
-          const ListTile(
-            leading: Icon(Icons.info),
-            title: Text('Version'),
-            subtitle: Text('1.0.0+1'),
-          ),
-          const ListTile(
-            leading: Icon(Icons.code),
-            title: Text('Architecture'),
-            subtitle: Text('Flutter + QEMU + Alpine Linux'),
-          ),
           ListTile(
-            leading: const Icon(Icons.article),
-            title: const Text('Documentation'),
-            subtitle: const Text('View architecture docs'),
-            onTap: () {
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Documentation'),
-                  content: const Text(
-                    'See ARCHITECTURE.md and ARC_START.md in the project root.',
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Close'),
-                    ),
-                  ],
-                ),
-              );
-            },
+            leading: const Icon(Icons.info_outline),
+            title: const Text('About Pockr'),
+            subtitle: const Text('Version, licenses, project info'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AboutScreen()),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.all(16.0),
