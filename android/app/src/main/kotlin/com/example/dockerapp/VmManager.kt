@@ -142,11 +142,14 @@ class VmManager(private val context: Context) {
     }
 
     fun getStatus(): String {
-        if (!isRunning) return "stopped"
+        // Check the process directly first — isRunning can be briefly false during
+        // the startVm() window between stopVm() and isRunning=true, causing a race
+        // where refreshStatus() returns "stopped" while QEMU is still alive.
         vmProcess?.let {
             return try {
                 it.exitValue()
                 isRunning = false
+                vmProcess = null
                 "stopped"
             } catch (_: IllegalThreadStateException) {
                 "running"
