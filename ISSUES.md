@@ -100,9 +100,7 @@ Flutter UI → MethodChannel → VmManager.kt → ProcessBuilder(libqemu.so) →
 ---
 
 ## Firebase Test Lab Setup
-- **Project:** `docker-28f14`
-- **GCP Project:** `my-project1-366819`
-- **Service account:** `docker@my-project1-366819.iam.gserviceaccount.com`
+- **Project:** `<your-gcp-project>`
 - **Test device:** `Pixel2.arm` (ARM virtual device, Android 30)
 - **Script:** `scripts/firebase_test.sh`
 
@@ -141,7 +139,7 @@ Flutter UI → MethodChannel → VmManager.kt → ProcessBuilder(libqemu.so) →
 - `android/app/src/main/kotlin/com/example/dockerapp/VmManager.kt` — core VM logic
 - `scripts/firebase_test.sh` — Firebase Test Lab runner (Docker-based)
 - `scripts/build_apk.sh` — APK builder (Docker-based, Ubuntu:22.04)
-- `service-account-key.json` — Firebase service account (NOT committed, in project root)
+- `service-account-key.json` — Firebase service account (NOT committed, stored outside repo at `~/Desktop/MAIN/kalvin/testcase_and_creds/`)
 
 ---
 

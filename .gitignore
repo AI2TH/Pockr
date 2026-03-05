@@ -1,15 +1,16 @@
 # Generated VM assets (too large / binary — regenerate with scripts/build_alpine_base.sh)
 android/app/src/main/assets/vm/base.qcow2.gz
-android/app/src/main/assets/vm/base.qcow2
-android/app/src/main/assets/vm/*.qcow2*
+# android/app/src/main/assets/vm/base.qcow2
+# android/app/src/main/assets/vm/*.qcow2*
 
 # Credentials and secrets only
 *.jks
 *.apk
 # debug.keystore intentionally committed for consistent APK signing across builds
-release.keystore
+# release.keystore
 .env
 *.env.*
 *_credentials*
 credentials.json
 service_account*.json
+service-account*.json

@@ -118,6 +118,7 @@ class VmState extends ChangeNotifier {
   // -------------------------------------------------------------------------
 
   Future<void> startVm() async {
+    if (_status == 'running' || _status == 'starting') return;
     _isLoading = true;
     _status = 'starting';
     _errorMessage = null;

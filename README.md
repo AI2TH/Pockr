@@ -4,9 +4,9 @@ Run Docker containers on a non-rooted Android device — no Termux, no root, one
 
 ## Download
 
-**[Download APK (Google Drive)](https://drive.google.com/drive/folders/1LWLATGacL_hoWuJ4V6S4hUEbBOqTci11?usp=drive_link)**
+**[Download APK (GitHub Releases)](https://github.com/AI2TH/Pockr/releases/latest)**
 
-> **Note:** Google Drive shows a "This file looks suspicious" warning for all APK files — this is a blanket policy for any `.apk`, not specific to Pockr. Click **"Download anyway"** to proceed. After downloading, enable **"Install from unknown sources"** in Android Settings to sideload the APK.
+> After downloading, enable **"Install from unknown sources"** in Android Settings to sideload the APK.
 
 The app embeds QEMU running Alpine Linux. Docker runs inside the VM. A FastAPI server inside the VM exposes a REST API over localhost, which the Flutter UI calls to manage containers.
 
@@ -236,7 +236,7 @@ options timeout:2 attempts:2 use-vc
 Automated Robo tests run on `Pixel2.arm` (ARM64), Android 11 (API 30):
 
 ```bash
-./scripts/firebase_test.sh docker-28f14 Pixel2.arm 30
+./scripts/firebase_test.sh <your-gcp-project> Pixel2.arm 30
 ```
 
 Requires `service-account-key.json` in the project root (gitignored).

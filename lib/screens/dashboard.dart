@@ -201,7 +201,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   isRunning
                       ? vmState.isHealthy
                           ? 'API healthy at localhost:7080'
-                          : 'VM running — API warming up...'
+                          : 'Booting Alpine — first boot takes ~5 min, please wait'
                       : isStarting
                           ? 'Extracting assets and launching QEMU...'
                           : 'Virtual machine is not running',

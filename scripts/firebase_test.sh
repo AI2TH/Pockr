@@ -4,7 +4,7 @@
 #
 # Prerequisites:
 #   1. Firebase project created at console.firebase.google.com
-#   2. Service account JSON key at: service-account-key.json (project root)
+#   2. Service account JSON key at: ~/Desktop/MAIN/kalvin/testcase_and_creds/service-account-key.json
 #      - Go to GCP Console → IAM → Service Accounts → Create → Editor role → Download JSON
 #   3. APK built at: build/pockr-release.apk  (or build/pockr-debug.apk)
 #
@@ -31,7 +31,7 @@ APK="${4:-${PROJECT_ROOT}/build/pockr-release.apk}"
 if [ ! -f "${APK}" ]; then
   APK="${PROJECT_ROOT}/build/pockr-debug.apk"
 fi
-KEY_FILE="${PROJECT_ROOT}/service-account-key.json"
+KEY_FILE="${HOME}/Desktop/MAIN/kalvin/testcase_and_creds/service-account-key.json"
 
 if ! command -v docker &>/dev/null; then
   echo "ERROR: Docker is required."
