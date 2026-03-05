@@ -79,6 +79,40 @@ du -sh ~/Desktop/MAIN/kalvin/testcase_and_creds/test-results/
 du -sh ~/Desktop/MAIN/kalvin/testcase_and_creds/
 ```
 
+## Split large files for distribution (e.g. GitHub upload)
+
+### Split into 99 MB chunks
+```bash
+split -b 99m app.apk app.part-
+# Produces: app.part-aa, app.part-ab, app.part-ac ...
+```
+
+### Combine parts back
+```bash
+cat app.part-* > app_restored.apk
+```
+
+### Verify integrity
+```bash
+# Before splitting — generate checksum
+shasum -a 256 app.apk > app.apk.sha256
+
+# After combining — verify
+shasum -a 256 -c app.apk.sha256
+# Expected: app.apk: OK
+```
+
+### Verify APK is a valid ZIP
+```bash
+unzip -t app_restored.apk
+# Should end with: No errors detected in compressed data
+```
+
+> **Note:** Never gzip `.apk` files — APKs are already ZIP-compressed; gzip makes them larger.
+> Always store the `.sha256` alongside the parts for later verification.
+
+---
+
 ## Decompressing when needed
 
 ```bash
