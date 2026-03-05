@@ -1,5 +1,5 @@
 # Generated VM assets (too large / binary — regenerate with scripts/build_alpine_base.sh)
-# android/app/src/main/assets/vm/base.qcow2.gz
+android/app/src/main/assets/vm/base.qcow2.gz
 # android/app/src/main/assets/vm/base.qcow2
 # android/app/src/main/assets/vm/*.qcow2*
 
