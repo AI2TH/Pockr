@@ -13,3 +13,4 @@ release.keystore
 *_credentials*
 credentials.json
 service_account*.json
+service-account*.json

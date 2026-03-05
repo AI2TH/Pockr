@@ -59,7 +59,7 @@ File(filesDir, "assets_extracted.vN")  // increment N
 ## `firebase_test.sh`
 
 ```bash
-./scripts/firebase_test.sh docker-28f14 Pixel2.arm 30
+./scripts/firebase_test.sh <your-gcp-project> Pixel2.arm 30
 ```
 
 Arguments: `<project-id> <device-model> <android-api-level>`
@@ -67,11 +67,11 @@ Arguments: `<project-id> <device-model> <android-api-level>`
 Requires `service-account-key.json` in the project root (Firebase service account, gitignored).
 
 **Test device:** Pixel2.arm — ARM64 physical device, Android 11 (API 30)
-**GCS bucket:** `test-lab-a6uqmcd6pp4xs-yxka23mkk7jy8`
+**GCS bucket:** `<your-gcs-bucket>` (shown in test output)
 
 Download logcat after test:
 ```bash
-gsutil cp "gs://test-lab-a6uqmcd6pp4xs-yxka23mkk7jy8/<run-id>/Pixel2.arm-30-en-portrait/logcat" /tmp/logcat.txt
+gsutil cp "gs://<your-gcs-bucket>/<run-id>/Pixel2.arm-30-en-portrait/logcat" /tmp/logcat.txt
 ```
 
 ---

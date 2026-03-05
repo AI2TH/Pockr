@@ -2,8 +2,7 @@
 
 Get **Pockr** running in 3 steps. **Docker Desktop is the only host requirement** — no Homebrew, no Android SDK, no Flutter, no QEMU.
 
-> **Just want to try it?** [Download the APK directly from Google Drive](https://drive.google.com/drive/folders/1LWLATGacL_hoWuJ4V6S4hUEbBOqTci11?usp=drive_link) and skip to Step 3.
-> Google Drive will warn "This file looks suspicious" — this is shown for **all** APK files. Click **"Download anyway"**.
+> **Just want to try it?** [Download the APK from GitHub Releases](https://github.com/AI2TH/Pockr/releases/latest) and skip to Step 3.
 
 ---
 
@@ -111,7 +110,7 @@ grep -i "error" /tmp/flutter_build.log | head -20
 Run automated Robo tests on real ARM64 hardware without a physical device:
 
 ```bash
-./scripts/firebase_test.sh docker-28f14 Pixel2.arm 30
+./scripts/firebase_test.sh <your-gcp-project> Pixel2.arm 30
 ```
 
 Requires `service-account-key.json` (Firebase service account, gitignored).

@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const _kProjectUrl = 'https://github.com/AI2TH/Pockr';
-const _kDownloadUrl = 'https://drive.google.com/drive/folders/1LWLATGacL_hoWuJ4V6S4hUEbBOqTci11?usp=drive_link';
+const _kDownloadUrl = 'https://github.com/AI2TH/Pockr/releases/latest';
 const _kCompany = 'AI2TH';
 const _kVersion = '1.0.0';
 const _kTagline = 'Docker on Android — no root required';
@@ -186,7 +186,7 @@ class AboutScreen extends StatelessWidget {
             leading: const Icon(Icons.download_outlined),
             title: const Text('Download APK'),
             subtitle: const Text(
-              'Google Drive',
+              'GitHub Releases',
               style: TextStyle(fontSize: 12),
             ),
             trailing: Row(

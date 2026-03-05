@@ -142,12 +142,12 @@ assetsReady() → true AND user.qcow2 exists
 ## Firebase Test Lab
 
 - Device: `Pixel2.arm` — ARM64, Android 11 (API 30)
-- Project: `docker-28f14`
-- GCS bucket: `test-lab-a6uqmcd6pp4xs-yxka23mkk7jy8`
-- Latest passing build: **v28** (release APK, Pockr branding, About screen)
+- Project: `<your-gcp-project>`
+- GCS bucket: `<your-gcs-bucket>`
+- Latest passing build: **v31** (GitHub Releases download URL, Google Drive removed)
 
 ```bash
-./scripts/firebase_test.sh docker-28f14 Pixel2.arm 30
+./scripts/firebase_test.sh <your-gcp-project> Pixel2.arm 30
 ```
 
 ### v28 logcat findings (2026-03-03)
