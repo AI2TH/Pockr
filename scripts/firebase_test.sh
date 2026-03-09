@@ -31,7 +31,7 @@ APK="${4:-${PROJECT_ROOT}/build/pockr-release.apk}"
 if [ ! -f "${APK}" ]; then
   APK="${PROJECT_ROOT}/build/pockr-debug.apk"
 fi
-KEY_FILE="${HOME}/Desktop/MAIN/kalvin/testcase_and_creds/service-account-key.json"
+KEY_FILE="${KEY_FILE:-${HOME}/Desktop/MAIN/kalvin/AI2TH/testcase_and_creds/service-account-key.json}"
 
 if ! command -v docker &>/dev/null; then
   echo "ERROR: Docker is required."
