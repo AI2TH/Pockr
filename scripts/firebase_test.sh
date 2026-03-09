@@ -23,15 +23,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-GCP_PROJECT="${1}"
-DEVICE="${2:-Pixel6}"
+GCP_PROJECT="${1:-docker-28f14}"
+DEVICE="${2:-Pixel2.arm}"
 ANDROID_VERSION="${3:-31}"
 APK="${4:-${PROJECT_ROOT}/build/pockr-release.apk}"
 # Fall back to debug build if release not found
 if [ ! -f "${APK}" ]; then
   APK="${PROJECT_ROOT}/build/pockr-debug.apk"
 fi
-KEY_FILE="${HOME}/Desktop/MAIN/kalvin/testcase_and_creds/service-account-key.json"
+KEY_FILE="${KEY_FILE:-${HOME}/Desktop/MAIN/kalvin/AI2TH/testcase_and_creds/service-account-key.json}"
 
 if ! command -v docker &>/dev/null; then
   echo "ERROR: Docker is required."

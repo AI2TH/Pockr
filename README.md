@@ -258,6 +258,28 @@ See [`LICENSES.md`](LICENSES.md) for the full breakdown and compliance checklist
 
 ---
 
+## Screenshots
+
+| Dashboard — stopped | Dashboard — running | Containers |
+|---|---|---|
+| ![Dashboard stopped](https://ai2th.github.io/screenshots/pockr/01-dashboard-stopped.png) | ![Dashboard running](https://ai2th.github.io/screenshots/pockr/03-dashboard-running.png) | ![Containers](https://ai2th.github.io/screenshots/pockr/05-containers.png) |
+
+| Terminal | Settings | About |
+|---|---|---|
+| ![Terminal](https://ai2th.github.io/screenshots/pockr/06-terminal.png) | ![Settings](https://ai2th.github.io/screenshots/pockr/07-settings.png) | ![About](https://ai2th.github.io/screenshots/pockr/08-about.png) |
+
+---
+
 ## Related
 
 - [termux-docker-no-root](https://github.com/mabdulmoghni/termux-docker-no-root) — community validation of the VM-based approach this project is based on
+
+---
+
+## About AI2TH
+
+**Applied Intelligence To Tackle Hardships**
+
+AI2TH builds developer tools that bring powerful computing environments to constrained devices — no root, no Termux, just the APK.
+
+🌐 [ai2th.github.io](https://ai2th.github.io)
