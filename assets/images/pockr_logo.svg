@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Brand gradient (blue → green) for pocket outline -->
+    <linearGradient id="pGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#1D6FE5"/>
+      <stop offset="100%" stop-color="#00C896"/>
+    </linearGradient>
+    <!-- Blue container gradient -->
+    <linearGradient id="cBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#1557C0"/>
+      <stop offset="100%" stop-color="#2B7FFF"/>
+    </linearGradient>
+    <!-- Green container gradient -->
+    <linearGradient id="cGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#00A876"/>
+      <stop offset="100%" stop-color="#00D49E"/>
+    </linearGradient>
+    <!-- Clip containers to the pocket interior -->
+    <clipPath id="pocketClip">
+      <path d="M 100 80 L 100 320 Q 256 430 412 320 L 412 80 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="80" fill="#0B1120"/>
+
+  <!-- Pocket interior fill (slightly lighter than bg) -->
+  <path d="M 100 80 L 100 320 Q 256 430 412 320 L 412 80 Z"
+        fill="#131E30"/>
+
+  <!-- Container grid clipped to pocket shape -->
+  <g clip-path="url(#pocketClip)">
+    <!-- Row 1 — blue (Android / outer layer) -->
+    <rect x="116" y="98"  width="126" height="76" rx="13" fill="url(#cBlue)"/>
+    <rect x="270" y="98"  width="126" height="76" rx="13" fill="url(#cBlue)"/>
+    <!-- Row 2 — green (Docker / running state) -->
+    <rect x="116" y="192" width="126" height="76" rx="13" fill="url(#cGreen)"/>
+    <rect x="270" y="192" width="126" height="76" rx="13" fill="url(#cGreen)"/>
+    <!-- Row 3 — naturally clipped by pocket curve at bottom -->
+    <rect x="116" y="286" width="126" height="76" rx="13" fill="url(#cBlue)"/>
+    <rect x="270" y="286" width="126" height="76" rx="13" fill="url(#cGreen)"/>
+  </g>
+
+  <!-- Pocket sides + curved bottom (open at top, drawn over containers) -->
+  <path d="M 84 80 L 84 322 Q 256 448 428 322 L 428 80"
+        fill="none" stroke="url(#pGrad)" stroke-width="20"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Pocket top seam -->
+  <line x1="68" y1="80" x2="444" y2="80"
+        stroke="url(#pGrad)" stroke-width="20" stroke-linecap="round"/>
+
+</svg>

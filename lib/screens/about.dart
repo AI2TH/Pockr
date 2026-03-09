@@ -103,7 +103,7 @@ class AboutScreen extends StatelessWidget {
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: Image.asset(
-                    'assets/images/logo.jpeg',
+                    'assets/images/logo.png',
                     fit: BoxFit.cover,
                   ),
                 ),
@@ -152,6 +152,12 @@ class AboutScreen extends StatelessWidget {
             leading: const Icon(Icons.business_outlined),
             title: const Text(_kCompany),
             subtitle: const Text('Developer'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.language_outlined),
+            title: const Text('ai2th.github.io'),
+            subtitle: const Text('Website'),
+            onTap: () => _launch('https://ai2th.github.io'),
           ),
 
           const Divider(height: 1, indent: 16, endIndent: 16),

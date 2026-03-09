@@ -23,8 +23,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-GCP_PROJECT="${1}"
-DEVICE="${2:-Pixel6}"
+GCP_PROJECT="${1:-docker-28f14}"
+DEVICE="${2:-Pixel2.arm}"
 ANDROID_VERSION="${3:-31}"
 APK="${4:-${PROJECT_ROOT}/build/pockr-release.apk}"
 # Fall back to debug build if release not found
