@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit
 
 class VmApiClient(private val token: String) {
     private val TAG = "VmApiClient"
-    private val baseUrl = "http://127.0.0.1:7080"
+    private val baseUrl = "http://127.0.0.1:7081"
     private val gson = Gson()
 
     private val client = OkHttpClient.Builder()

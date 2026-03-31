@@ -81,7 +81,6 @@ class VmManager(private val context: Context) {
 
         val cmd = buildQemuCommand(
             qemuBin = qemuBin.absolutePath,
-            baseImage = baseImage.absolutePath,
             userImage = userImage.absolutePath,
             vcpu = vcpu,
             ramMb = ramMb
@@ -296,7 +295,6 @@ class VmManager(private val context: Context) {
 
     private fun buildQemuCommand(
         qemuBin: String,
-        baseImage: String,
         userImage: String,
         vcpu: Int,
         ramMb: Int
@@ -313,19 +311,29 @@ class VmManager(private val context: Context) {
             cmd += listOf("-cpu", "qemu64")
         }
 
+        // Multi-threaded TCG: ~2x speedup on multi-core devices.
+        // Android doesn't expose KVM, so software TCG is the only option.
+        cmd += listOf("-accel", "tcg,thread=multi")
+
         cmd += listOf("-smp", vcpu.toString())
         cmd += listOf("-m", ramMb.toString())
 
-        cmd += listOf("-drive", "if=none,file=$baseImage,id=base,format=qcow2,readonly=on")
+        // Only mount the user overlay — it reads base.qcow2 transparently via
+        // the QCOW2 backing chain set during qemu-img create.
         cmd += listOf("-drive", "if=none,file=$userImage,id=user,format=qcow2")
         cmd += listOf("-device", "virtio-blk-pci,drive=user")
 
-        cmd += listOf("-netdev", "user,id=net0,hostfwd=tcp::7080-:7080")
+        cmd += listOf("-netdev", "user,id=net0,hostfwd=tcp::7081-:7080")
         cmd += listOf("-device", "virtio-net-pci,netdev=net0,romfile=")
+
+        // Hardware RNG — eliminates /dev/random entropy starvation that blocks
+        // Docker daemon startup, SSH key generation, and TLS handshakes.
+        cmd += listOf("-device", "virtio-rng-pci")
 
         cmd += listOf("-fw_cfg", "name=opt/api_token,string=$token")
         cmd += listOf("-display", "none")
         cmd += listOf("-serial", "stdio")  // route ttyAMA0 → Java stdout → logcat
+        cmd += listOf("-no-reboot")        // don't restart on kernel panic
 
         val kernel = File(vmDir, "vmlinuz-virt")
         val initrd = File(vmDir, "initramfs-virt")

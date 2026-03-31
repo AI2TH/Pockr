@@ -29,9 +29,10 @@ docker run --rm \
 echo ""
 echo "=== Build complete ==="
 ls -lh "${ASSETS_VM_DIR}/base.qcow2.gz"
+ls -lh "${ASSETS_VM_DIR}/vmlinuz-virt" "${ASSETS_VM_DIR}/initramfs-virt"
 echo ""
 echo "SHA-256:"
-shasum -a 256 "${ASSETS_VM_DIR}/base.qcow2.gz"
+shasum -a 256 "${ASSETS_VM_DIR}/base.qcow2.gz" "${ASSETS_VM_DIR}/vmlinuz-virt" "${ASSETS_VM_DIR}/initramfs-virt"
 exit 0
 
 # ---- inner script below (also lives in alpine_build_inner.sh) ----

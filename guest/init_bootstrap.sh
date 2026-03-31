@@ -1,14 +1,33 @@
 #!/bin/sh
 # Bootstrap: runs on first boot inside the QEMU VM.
 # Docker and Python are pre-installed in the base image.
-# This script reads the API token, waits for Docker, then starts the API server.
+# This script loads kernel modules, waits for Docker, then starts the API server.
 
 echo "=== Docker VM Bootstrap Starting ==="
 
 # ---------------------------------------------------------------------------
+# Load kernel modules required by Docker (if not already loaded by OpenRC)
+# These provide bridge networking, iptables NAT, and cgroup support.
+# ---------------------------------------------------------------------------
+echo "Loading kernel modules..."
+for mod in bridge br_netfilter nf_tables nf_nat nf_conntrack qemu_fw_cfg; do
+    modprobe "$mod" 2>/dev/null && echo "  loaded: $mod" || echo "  skip: $mod (already loaded or unavailable)"
+done
+
+# Enable bridge netfilter (required for Docker iptables rules on bridged traffic)
+if [ -f /proc/sys/net/bridge/bridge-nf-call-iptables ]; then
+    echo 1 > /proc/sys/net/bridge/bridge-nf-call-iptables
+    echo 1 > /proc/sys/net/bridge/bridge-nf-call-ip6tables
+fi
+
+# Ensure cgroup2 is mounted (Docker needs it for resource isolation)
+if ! mountpoint -q /sys/fs/cgroup; then
+    mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
 # Read API token from kernel cmdline.
 # Android app injects it via: -append "... api_token=<UUID>"
-# Readable from: /proc/cmdline
 # ---------------------------------------------------------------------------
 TOKEN_FILE="/bootstrap/token"
 
@@ -18,8 +37,13 @@ if [ -n "$TOKEN" ]; then
     echo "Token loaded from kernel cmdline"
 else
     echo "WARNING: api_token not found in kernel cmdline"
-    # Fallback: reuse token from previous boot if present
-    if [ -f "$TOKEN_FILE" ]; then
+    # Fallback: try fw_cfg
+    FW_CFG="/sys/firmware/qemu_fw_cfg/by_name/opt/api_token/raw"
+    if [ -f "$FW_CFG" ]; then
+        TOKEN=$(cat "$FW_CFG")
+        echo -n "$TOKEN" > "$TOKEN_FILE"
+        echo "Token loaded from fw_cfg"
+    elif [ -f "$TOKEN_FILE" ]; then
         TOKEN=$(cat "$TOKEN_FILE")
         echo "Using persisted token from $TOKEN_FILE"
     fi
@@ -29,35 +53,26 @@ export API_TOKEN="$TOKEN"
 
 # ---------------------------------------------------------------------------
 # Wait for Docker daemon (started by OpenRC docker service)
+# With virtio-rng providing entropy, Docker starts much faster (~10-20s).
 # ---------------------------------------------------------------------------
 echo "Waiting for Docker daemon..."
-# Print Docker log after 3s to diagnose startup issues
-sleep 3
-echo "=== dockerd log (first 3s) ==="
-cat /var/log/docker.log 2>/dev/null || echo "(no log yet)"
-echo "=== end dockerd log ==="
-echo "=== /var/run/ ==="
-ls /var/run/ 2>/dev/null
-echo "======================"
-
-timeout=117
+timeout=60
 while [ $timeout -gt 0 ]; do
     if docker info >/dev/null 2>&1; then
-        echo "Docker is ready (waited $((120 - timeout))s)"
+        echo "Docker is ready (waited $((60 - timeout))s)"
         break
     fi
-    # Print Docker log update every 30s
-    if [ $((timeout % 30)) -eq 0 ]; then
-        echo "--- dockerd log (t=$((120 - timeout))s) ---"
-        tail -10 /var/log/docker.log 2>/dev/null || true
-        ls -la /var/run/docker.sock 2>/dev/null || echo "(no socket)"
+    # Print progress every 15s
+    if [ $((timeout % 15)) -eq 0 ] && [ $timeout -lt 60 ]; then
+        echo "--- still waiting (t=$((60 - timeout))s) ---"
+        tail -5 /var/log/docker.log 2>/dev/null || true
     fi
     sleep 1
     timeout=$((timeout - 1))
 done
 
 if [ $timeout -eq 0 ]; then
-    echo "ERROR: Docker did not become ready in 120s"
+    echo "ERROR: Docker did not become ready in 60s"
     echo "=== final dockerd log ==="
     cat /var/log/docker.log 2>/dev/null | tail -40 || true
     echo "=== docker info ==="
@@ -66,6 +81,10 @@ if [ $timeout -eq 0 ]; then
 fi
 
 echo "Docker: $(docker --version)"
+
+# Verify Docker networking works
+echo "=== Docker network check ==="
+docker network ls 2>/dev/null || echo "(network ls failed)"
 
 # ---------------------------------------------------------------------------
 # Start API server

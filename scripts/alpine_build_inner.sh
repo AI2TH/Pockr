@@ -10,8 +10,10 @@ MINIROOTFS_URL="https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alp
 wget -q -O /tmp/minirootfs.tar.gz "$MINIROOTFS_URL"
 echo "Downloaded: $(du -sh /tmp/minirootfs.tar.gz | cut -f1)"
 
-echo "=== Creating 1GB ext4 raw disk ==="
-dd if=/dev/zero of=/tmp/alpine.raw bs=1M count=1024 status=none
+echo "=== Creating 2GB ext4 raw disk ==="
+# 2GB: Docker images (alpine ~7MB, nginx ~40MB) + layers need room.
+# 1GB was too tight — `docker pull` would hit ENOSPC.
+dd if=/dev/zero of=/tmp/alpine.raw bs=1M count=2048 status=none
 mkfs.ext4 -F -L "alpine-root" -m 0 -q /tmp/alpine.raw
 
 mkdir -p /mnt/alpine
@@ -25,16 +27,30 @@ https://dl-cdn.alpinelinux.org/alpine/v3.19/main
 https://dl-cdn.alpinelinux.org/alpine/v3.19/community
 REPOS
 
-echo "=== Installing alpine-base, openrc, docker, python3 via apk --root ==="
+echo "=== Installing packages (alpine-base, openrc, docker, python3, linux-virt) ==="
+# linux-virt provides:
+#   /lib/modules/<ver>/ — kernel modules for bridge, netfilter, cgroups
+#   /boot/vmlinuz-virt  — kernel (we extract this for QEMU -kernel)
+#   /boot/initramfs-virt — initrd (we extract this for QEMU -initrd)
+# Without /lib/modules, Docker cannot create bridge networks or set up
+# iptables NAT rules, making containers unable to reach the internet.
 apk --root /mnt/alpine \
     --arch aarch64 \
     --repositories-file /mnt/alpine/etc/apk/repositories \
     add --no-cache \
-    alpine-base openrc docker python3 2>&1 | tail -25
+    alpine-base openrc docker python3 linux-virt 2>&1 | tail -30
 echo "APK exit: $?"
 
+echo "=== Extracting kernel + initramfs for QEMU -kernel ==="
+# Copy vmlinuz and initramfs to /out (assets/vm/) so Android can pass them
+# directly to QEMU via -kernel/-initrd.  This ensures the kernel version
+# matches the modules in /lib/modules/ inside the rootfs.
+cp /mnt/alpine/boot/vmlinuz-virt /out/vmlinuz-virt
+cp /mnt/alpine/boot/initramfs-virt /out/initramfs-virt
+echo "Kernel: $(ls -lh /out/vmlinuz-virt | awk '{print $5}')"
+echo "Initrd: $(ls -lh /out/initramfs-virt | awk '{print $5}')"
+
 echo "=== Pre-installing Python API server dependencies ==="
-# Install pip packages into the target rootfs from the host.
 # Both host and target are Alpine 3.19 aarch64 so packages are compatible.
 pip3 install --break-system-packages \
     --root /mnt/alpine \
@@ -77,25 +93,54 @@ devtmpfs /dev devtmpfs defaults 0 0
 devpts /dev/pts devpts gid=5,mode=620 0 0
 shm /dev/shm tmpfs defaults 0 0
 tmp /tmp tmpfs nosuid,nodev 0 0
+cgroup2 /sys/fs/cgroup cgroup2 defaults 0 0
 FSTAB
 
 echo "=== Docker daemon config ==="
-# iptables-nft requires CONFIG_NF_TABLES in kernel. The Alpine 6.6.14-0-virt
-# kernel has nf_tables as a module, but /lib/modules is absent in our rootfs
-# (we only ship vmlinuz + initramfs, not the full linux-virt package).
-# Disabling iptables lets Docker start without needing netfilter modules.
-# docker pull/run still work; container internet NAT is absent until we add
-# linux-virt kernel modules.
+# With linux-virt installed, /lib/modules/ is present, so the kernel can load
+# bridge, nf_tables, nf_nat, nf_conntrack on demand.  This means Docker can
+# now create docker0, set up iptables NAT, and give containers internet access.
 mkdir -p /mnt/alpine/etc/docker
 cat > /mnt/alpine/etc/docker/daemon.json << 'DOCKERCFG'
 {
-  "iptables": false,
-  "bridge": "none",
-  "ip-masq": false,
-  "userland-proxy": false,
-  "dns": ["8.8.8.8", "8.8.4.4"]
+  "storage-driver": "overlay2",
+  "dns": ["8.8.8.8", "8.8.4.4"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "5m",
+    "max-file": "2"
+  }
 }
 DOCKERCFG
+
+echo "=== Kernel module auto-load config ==="
+# These modules must be loaded BEFORE Docker starts so it can create
+# the docker0 bridge and set up iptables NAT rules.
+cat > /mnt/alpine/etc/modules-load.d/docker.conf << 'MODULES'
+# Required for Docker bridge networking
+bridge
+br_netfilter
+# Required for Docker iptables/NAT
+nf_tables
+nf_nat
+nf_conntrack
+# Required for QEMU fw_cfg API token
+qemu_fw_cfg
+# virtio devices
+virtio_blk
+virtio_net
+virtio_rng
+MODULES
+
+# Also keep /etc/modules for OpenRC 'modules' service (boot runlevel)
+cat > /mnt/alpine/etc/modules << 'MODBOOT'
+virtio_blk
+virtio_net
+virtio_rng
+qemu_fw_cfg
+bridge
+br_netfilter
+MODBOOT
 
 echo "=== Copying bootstrap scripts ==="
 mkdir -p /mnt/alpine/bootstrap
@@ -141,13 +186,17 @@ for svc in modules sysctl hostname bootmisc syslog; do
 done
 
 # networking → docker → docker-bootstrap (ordered by depend() in each service)
-for svc in networking docker docker-bootstrap; do
-    ln -sf /etc/init.d/$svc /mnt/alpine/etc/runlevels/default/$svc
+for svc in networking cgroups docker docker-bootstrap; do
+    [ -f /mnt/alpine/etc/init.d/$svc ] && \
+        ln -sf /etc/init.d/$svc /mnt/alpine/etc/runlevels/default/$svc || \
+        echo "WARNING: init script for $svc not found, skipping"
 done
 
 echo "=== Rootfs stats ==="
 echo "Rootfs size: $(du -sh /mnt/alpine | cut -f1)"
 df -h /mnt/alpine | tail -1
+echo "Modules dir: $(ls /mnt/alpine/lib/modules/ 2>/dev/null || echo 'MISSING')"
+echo "Module count: $(find /mnt/alpine/lib/modules/ -name '*.ko*' 2>/dev/null | wc -l)"
 
 umount /mnt/alpine
 
@@ -159,4 +208,5 @@ gzip -9 -c /tmp/base.qcow2 > /out/base.qcow2.gz
 
 echo "=== Done ==="
 ls -lh /out/base.qcow2.gz
+ls -lh /out/vmlinuz-virt /out/initramfs-virt
 qemu-img info /tmp/base.qcow2

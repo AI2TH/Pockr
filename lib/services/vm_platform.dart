@@ -193,20 +193,24 @@ class VmState extends ChangeNotifier {
 
   void _startHealthPolling() {
     _healthPollTimer?.cancel();
-    // Poll every 5 seconds while the VM is expected to be running
-    _healthPollTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
-      if (_status != 'running' && _status != 'starting') {
-        _stopHealthPolling();
-        return;
-      }
-      final healthy = await VmPlatform.checkHealth();
-      if (healthy != _isHealthy) {
-        _isHealthy = healthy;
-        // If health check starts failing while we think VM is running,
-        // reflect that but don't change status (VM may still be booting)
-        notifyListeners();
-      }
-    });
+    // Poll every 3s while booting (faster readiness detection), then back off
+    // to 8s once healthy to reduce background CPU.
+    _healthPollTimer = Timer.periodic(
+      Duration(seconds: _isHealthy ? 8 : 3),
+      (_) async {
+        if (_status != 'running' && _status != 'starting') {
+          _stopHealthPolling();
+          return;
+        }
+        final healthy = await VmPlatform.checkHealth();
+        if (healthy != _isHealthy) {
+          _isHealthy = healthy;
+          notifyListeners();
+          // Switch polling interval now that state changed
+          _startHealthPolling();
+        }
+      },
+    );
   }
 
   void _stopHealthPolling() {
