@@ -25,7 +25,7 @@
       "Bash(echo \"=== Building Flutter/Android build environment ===\" && \\\\\ndocker build \\\\\n    --platform linux/amd64 \\\\\n    -f /Users/kalvin.nathan/Desktop/MAIN/kalvin/docker-app/docker/Dockerfile.build \\\\\n    -t docker-app-builder \\\\\n    /Users/kalvin.nathan/Desktop/MAIN/kalvin/docker-app 2>&1)",
       "Bash(tail:*)",
       "Bash(docker pull:*)",
-      "Bash(echo \"dckr_pat_oEZGg-h0Al8qNix82va3RwcW6L8\" | docker login -u ai2th --password-stdin 2>&1)",
+      "Bash(echo \"\" | docker login -u ai2th --password-stdin 2>&1)",
       "Bash(colima stop:*)",
       "Bash(docker info:*)",
       "Bash(mkdir:*)",
