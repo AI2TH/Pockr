@@ -2,7 +2,7 @@
 android/app/src/main/assets/vm/base.qcow2.gz
 # android/app/src/main/assets/vm/base.qcow2
 # android/app/src/main/assets/vm/*.qcow2*
-
+.claude/settings.local.json
 # Credentials and secrets only
 android/key.properties
 *.jks
