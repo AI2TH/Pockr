@@ -1,4 +1,4 @@
-package com.example.dockerapp
+package com.ai2th.pockr
 
 import android.content.Intent
 import android.os.Bundle
@@ -8,7 +8,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
-    private val CHANNEL = "com.example.dockerapp/vm"
+    private val CHANNEL = "com.ai2th.pockr/vm"
     // VmManager lives in the Application singleton so it survives Activity recreations.
     // A new MainActivity (e.g. from Robo test relaunch) reuses the same VmManager,
     // preserving vmProcess/isRunning and preventing port 7080 contention.

@@ -1,4 +1,4 @@
-package com.example.dockerapp
+package com.ai2th.pockr
 
 import android.app.Notification
 import android.app.NotificationChannel

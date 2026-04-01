@@ -22,9 +22,17 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader('UTF-8') { reader ->
+        keystoreProperties.load(reader)
+    }
+}
+
 android {
-    namespace "com.example.dockerapp"
-    compileSdk 34
+    namespace "com.ai2th.pockr"
+    compileSdk 35
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -46,9 +54,9 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.example.dockerapp"
+        applicationId "com.ai2th.pockr"
         minSdk 26
-        targetSdk 34
+        targetSdk 35
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }
@@ -60,6 +68,19 @@ android {
             keyAlias "debug"
             keyPassword "android"
         }
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            } else {
+                storeFile file("debug.keystore")
+                storePassword "android"
+                keyAlias "debug"
+                keyPassword "android"
+            }
+        }
     }
 
     buildTypes {
@@ -67,7 +88,7 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             minifyEnabled false
             shrinkResources false
         }

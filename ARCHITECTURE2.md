@@ -9,7 +9,7 @@ Companion to [ARCHITECTURE.md](ARCHITECTURE.md). This file is a condensed refere
 ```
 Flutter UI (Dart)
   └── VmPlatform.vmExec() / VmPlatform.startVm() / ...
-        └── MethodChannel("com.example.dockerapp/vm")
+        └── MethodChannel("com.ai2th.pockr/vm")
               └── MainActivity.kt — switch on call.method
                     └── VmManager.kt
                           └── VmApiClient.kt — OkHttp → http://127.0.0.1:7080

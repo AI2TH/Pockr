@@ -1,21 +1,21 @@
 #!/bin/bash
-# Build the Flutter Android APK entirely inside Docker.
+# Build the Flutter Android AAB entirely inside Docker.
 #
 # Usage:
-#   ./scripts/build_apk.sh            # debug build (default)
-#   ./scripts/build_apk.sh release    # release build
+#   ./scripts/build_aab.sh            # release build (default)
+#   ./scripts/build_aab.sh debug      # debug build
 #
 # Output:
-#   build/app-debug.apk   or
-#   build/app-release.apk
+#   build/pockr-release.aab   or
+#   build/pockr-debug.aab
 #
-# Requirements: Docker only.  No Flutter, Java, or Android SDK on the host.
+# Requirements: Docker only. No Flutter, Java, or Android SDK on the host.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BUILD_TYPE="${1:-debug}"
+BUILD_TYPE="${1:-release}"
 IMAGE_NAME="docker-app-builder"
 OUTPUT_DIR="${PROJECT_ROOT}/build"
 
@@ -37,18 +37,10 @@ if ! docker image inspect "${IMAGE_NAME}" &>/dev/null; then
     echo ""
 fi
 
-echo "=== Building Flutter APK (${BUILD_TYPE}) inside Docker ==="
+echo "=== Building Flutter AAB (${BUILD_TYPE}) inside Docker ==="
 echo "Project : ${PROJECT_ROOT}"
-echo "Output  : ${OUTPUT_DIR}/app-${BUILD_TYPE}.apk"
+echo "Output  : ${OUTPUT_DIR}/pockr-${BUILD_TYPE}.aab"
 echo ""
-
-# ── Run the build inside Docker ───────────────────────────────────────────────
-# Strategy:
-#   1. flutter create scaffolds a complete Android project (gradlew, gradle
-#      wrapper, res/, etc.) in /tmp/workspace
-#   2. We copy our source files (lib/, pubspec.yaml, Android sources) on top
-#   3. flutter pub get + flutter build apk
-#   4. APK is copied to the mounted /out volume
 
 docker run --rm \
     --platform linux/amd64 \
@@ -114,6 +106,14 @@ echo \"Gradle: \$(grep distributionUrl android/gradle/wrapper/gradle-wrapper.pro
 # Write local.properties so settings.gradle can locate flutter.sdk
 printf 'flutter.sdk=/opt/flutter\nsdk.dir=/opt/android-sdk\n' > android/local.properties
 
+# Copy release signing config if present
+if [ -f /src/android/key.properties ]; then
+    cp /src/android/key.properties android/key.properties
+    KEYSTORE_FILE=\$(grep '^storeFile=' android/key.properties | cut -d= -f2)
+    [ -n \"\$KEYSTORE_FILE\" ] && [ -f \"/src/android/app/\$KEYSTORE_FILE\" ] && \
+        cp \"/src/android/app/\$KEYSTORE_FILE\" \"android/app/\$KEYSTORE_FILE\" || true
+fi
+
 echo ''
 echo '--- Step 3: flutter pub get ---'
 flutter pub get
@@ -123,25 +123,22 @@ echo '--- Step 3b: Generate launcher icons from logo ---'
 dart run flutter_launcher_icons
 
 echo ''
-echo '--- Step 4: flutter build apk (${BUILD_TYPE}) ---'
-flutter build apk --${BUILD_TYPE} --verbose 2>&1 | tail -50
+echo '--- Step 4: flutter build appbundle (${BUILD_TYPE}) ---'
+flutter build appbundle --${BUILD_TYPE} --verbose 2>&1 | tail -50
 
 echo ''
-echo '--- Step 5: Copy APK to output ---'
-APK_SRC=\"build/app/outputs/flutter-apk/app-${BUILD_TYPE}.apk\"
-APK_OUT=\"pockr-${BUILD_TYPE}.apk\"
-if [ -f \"\$APK_SRC\" ]; then
-    cp \"\$APK_SRC\" /out/\$APK_OUT
-    echo \"APK size: \$(du -sh /out/\$APK_OUT | cut -f1)\"
+echo '--- Step 5: Copy AAB to output ---'
+AAB_SRC=\"build/app/outputs/bundle/${BUILD_TYPE}/app-${BUILD_TYPE}.aab\"
+AAB_OUT=\"pockr-${BUILD_TYPE}.aab\"
+if [ -f \"\$AAB_SRC\" ]; then
+    cp \"\$AAB_SRC\" /out/\$AAB_OUT
+    echo \"AAB size: \$(du -sh /out/\$AAB_OUT | cut -f1)\"
 else
-    echo 'ERROR: APK not found at \$APK_SRC'
-    ls -la build/app/outputs/flutter-apk/ 2>/dev/null || true
+    echo 'ERROR: AAB not found at \$AAB_SRC'
+    ls -la build/app/outputs/bundle/ 2>/dev/null || true
     exit 1
 fi
 "
 
 echo ""
-echo "✅  Build complete: ${OUTPUT_DIR}/pockr-${BUILD_TYPE}.apk"
-echo ""
-echo "Install on connected device:"
-echo "  adb install ${OUTPUT_DIR}/pockr-${BUILD_TYPE}.apk"
+echo "Build complete: ${OUTPUT_DIR}/pockr-${BUILD_TYPE}.aab"

@@ -1,4 +1,4 @@
-package com.example.dockerapp
+package com.ai2th.pockr
 
 import android.util.Log
 import com.google.gson.Gson

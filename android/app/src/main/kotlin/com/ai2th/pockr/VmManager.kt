@@ -1,4 +1,4 @@
-package com.example.dockerapp
+package com.ai2th.pockr
 
 import android.content.Context
 import android.content.SharedPreferences

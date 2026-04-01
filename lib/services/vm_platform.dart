@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class VmPlatform {
-  static const platform = MethodChannel('com.example.dockerapp/vm');
+  static const platform = MethodChannel('com.ai2th.pockr/vm');
 
   static Future<void> startVm() async {
     try {

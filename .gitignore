@@ -4,6 +4,7 @@ android/app/src/main/assets/vm/base.qcow2.gz
 # android/app/src/main/assets/vm/*.qcow2*
 
 # Credentials and secrets only
+android/key.properties
 *.jks
 *.apk
 # debug.keystore intentionally committed for consistent APK signing across builds
@@ -14,3 +15,6 @@ android/app/src/main/assets/vm/base.qcow2.gz
 credentials.json
 service_account*.json
 service-account*.json
+
+# Build artifacts
+*.aab
