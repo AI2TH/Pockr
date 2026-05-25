@@ -1,8 +1,10 @@
 package com.ai2th.pockr
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.StatFs
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
@@ -50,6 +52,7 @@ class VmManager(private val context: Context) {
             Log.d(TAG, "Stopping existing VM before restart")
             stopVm()
         }
+        killOrphanQemu()
 
         val freshExtraction = !assetsReady()
         if (freshExtraction) {
@@ -94,6 +97,14 @@ class VmManager(private val context: Context) {
             redirectErrorStream(true)
         }.start()
 
+        // Persist PID so orphaned QEMU can be killed after app restart
+        try {
+            val pid = (vmProcess!!.javaClass.getMethod("pid").invoke(vmProcess!!) as Long).toInt()
+            if (pid > 0) File(filesDir, "vm.pid").writeText(pid.toString())
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not save vm.pid: ${e.message}")
+        }
+
         isRunning = true
 
         // Drain QEMU stdout/stderr in background to prevent pipe buffer deadlock
@@ -124,7 +135,23 @@ class VmManager(private val context: Context) {
         }
         vmProcess = null
         isRunning = false
+        File(filesDir, "vm.pid").delete()
         Log.d(TAG, "VM stopped")
+    }
+
+    private fun killOrphanQemu() {
+        val pidFile = File(filesDir, "vm.pid")
+        if (!pidFile.exists()) return
+        val pid = pidFile.readText().trim().toIntOrNull()
+        pidFile.delete()
+        if (pid == null) return
+        try {
+            android.os.Process.killProcess(pid)
+            Log.d(TAG, "Killed orphan QEMU PID $pid")
+            Thread.sleep(500)
+        } catch (e: Exception) {
+            Log.w(TAG, "killOrphan: ${e.message}")
+        }
     }
 
     fun checkHealth(): Boolean {
@@ -197,8 +224,10 @@ class VmManager(private val context: Context) {
     // QEMU binaries are handled by Android via jniLibs — no manual extraction
     // -------------------------------------------------------------------------
 
+    private val ASSETS_VERSION = "v12"
+
     private fun assetsReady(): Boolean {
-        val marker = File(filesDir, "assets_extracted.v11")
+        val marker = File(filesDir, "assets_extracted.$ASSETS_VERSION")
         return marker.exists()
             && resolveQemuBinary().exists()
             && File(vmDir, "base.qcow2").exists()
@@ -207,29 +236,30 @@ class VmManager(private val context: Context) {
     }
 
     private fun extractAssets() {
+        // Remove old version markers so stale extractions are not reused
+        filesDir.listFiles()?.filter { it.name.startsWith("assets_extracted.") }
+            ?.forEach { it.delete() }
+
         vmDir.mkdirs()
         bootstrapDir.mkdirs()
 
-        // Base image — aapt2 decompresses .gz assets and drops the extension.
-        // Try the already-decompressed path first, fall back to .gz.
+        // Always re-extract base.qcow2 — called only when ASSETS_VERSION changed
         val baseQcow2 = File(vmDir, "base.qcow2")
-        if (!baseQcow2.exists()) {
-            try {
-                extractAsset("vm/base.qcow2", baseQcow2)
-                Log.d(TAG, "Extracted base.qcow2 (aapt2 pre-decompressed)")
-            } catch (_: Exception) {
-                extractAndDecompress("vm/base.qcow2.gz", baseQcow2)
-                Log.d(TAG, "Extracted + decompressed base.qcow2.gz")
-            }
+        baseQcow2.delete()
+        try {
+            extractAsset("vm/base.qcow2", baseQcow2)
+            Log.d(TAG, "Extracted base.qcow2 (aapt2 pre-decompressed)")
+        } catch (_: Exception) {
+            extractAndDecompress("vm/base.qcow2.gz", baseQcow2)
+            Log.d(TAG, "Extracted + decompressed base.qcow2.gz")
         }
 
-        // Kernel and initrd
+        // Always re-extract kernel files so they match modules in base.qcow2
         listOf("vmlinuz-virt", "initramfs-virt").forEach { name ->
             val dest = File(vmDir, name)
-            if (!dest.exists()) {
-                extractAsset("vm/$name", dest)
-                Log.d(TAG, "Extracted $name")
-            }
+            dest.delete()
+            extractAsset("vm/$name", dest)
+            Log.d(TAG, "Extracted $name")
         }
 
         // Bootstrap scripts
@@ -238,8 +268,8 @@ class VmManager(private val context: Context) {
                 .onFailure { Log.w(TAG, "Bootstrap asset $name not found") }
         }
 
-        File(filesDir, "assets_extracted.v11").createNewFile()
-        Log.d(TAG, "Assets extracted to $filesDir")
+        File(filesDir, "assets_extracted.$ASSETS_VERSION").createNewFile()
+        Log.d(TAG, "Assets extracted ($ASSETS_VERSION)")
     }
 
     private fun extractAsset(assetPath: String, dest: File) {
@@ -270,13 +300,16 @@ class VmManager(private val context: Context) {
             )
         }
 
+        val prefDiskGb = getFlutterInt("flutter.disk_gb", 0).toLong()
+        val sizeGb = if (prefDiskGb > 0) prefDiskGb else availableOverlaySizeGb()
+        Log.d(TAG, "Creating user.qcow2 with ${sizeGb}G virtual size")
         val proc = ProcessBuilder(
             qemuImg.absolutePath, "create",
             "-f", "qcow2",
             "-b", baseImagePath,
             "-F", "qcow2",
             userImagePath,
-            "8G"
+            "${sizeGb}G"
         ).apply {
             environment()["LD_LIBRARY_PATH"] = nativeLibDir.absolutePath
         }.start()
@@ -311,9 +344,10 @@ class VmManager(private val context: Context) {
             cmd += listOf("-cpu", "qemu64")
         }
 
-        // Multi-threaded TCG: ~2x speedup on multi-core devices.
-        // Android doesn't expose KVM, so software TCG is the only option.
-        cmd += listOf("-accel", "tcg,thread=multi")
+        // Multi-threaded TCG: one thread per vCPU — significantly faster boot and runtime.
+        // tb-size=256 doubles the translation block cache (default 32 MB → 256 MB).
+        cmd += listOf("-accel", "tcg,thread=multi,tb-size=256")
+        cmd += listOf("-overcommit", "mem-lock=off")
 
         cmd += listOf("-smp", vcpu.toString())
         cmd += listOf("-m", ramMb.toString())
@@ -347,7 +381,9 @@ class VmManager(private val context: Context) {
             // without needing the qemu_fw_cfg kernel module.
             cmd += listOf("-append",
                 "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rootflags=rw " +
-                "modules=virtio_blk,ext4 api_token=$token quiet")
+                "modules=virtio_blk,ext4 quiet " +
+                "cgroup_no_v1=all " +
+                "api_token=$token")
         }
 
         return cmd
@@ -356,6 +392,16 @@ class VmManager(private val context: Context) {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    private fun availableOverlaySizeGb(): Long {
+        return try {
+            val stat = StatFs(filesDir.absolutePath)
+            val availableGb = (stat.availableBlocksLong * stat.blockSizeLong) / (1024L * 1024 * 1024)
+            (availableGb - 2L).coerceAtLeast(8L)
+        } catch (_: Exception) {
+            8L
+        }
+    }
 
     private fun isArm64(): Boolean =
         Build.SUPPORTED_ABIS.any { it.startsWith("arm64") }

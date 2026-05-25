@@ -117,13 +117,28 @@ echo "=== Kernel module auto-load config ==="
 # These modules must be loaded BEFORE Docker starts so it can create
 # the docker0 bridge and set up iptables NAT rules.
 cat > /mnt/alpine/etc/modules-load.d/docker.conf << 'MODULES'
-# Required for Docker bridge networking
+# Base IPv4/IPv6 defrag (required before conntrack)
+nf_defrag_ipv4
+nf_defrag_ipv6
+# Netfilter core
+x_tables
+nf_conntrack
+nf_nat
+# iptables extensions required for Docker NAT bridge
+xt_conntrack
+xt_MASQUERADE
+xt_addrtype
+ip_tables
+iptable_filter
+iptable_nat
+# Bridge networking
 bridge
 br_netfilter
-# Required for Docker iptables/NAT
-nf_tables
-nf_nat
-nf_conntrack
+# Container networking
+veth
+# Overlay filesystem (Docker storage driver)
+overlay
+fuse
 # Required for QEMU fw_cfg API token
 qemu_fw_cfg
 # virtio devices
@@ -138,8 +153,22 @@ virtio_blk
 virtio_net
 virtio_rng
 qemu_fw_cfg
+nf_defrag_ipv4
+nf_defrag_ipv6
+x_tables
+nf_conntrack
+nf_nat
+xt_conntrack
+xt_MASQUERADE
+xt_addrtype
+ip_tables
+iptable_filter
+iptable_nat
 bridge
 br_netfilter
+veth
+overlay
+fuse
 MODBOOT
 
 echo "=== Copying bootstrap scripts ==="
